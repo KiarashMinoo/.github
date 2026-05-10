@@ -1,0 +1,70 @@
+# CI — Build & Test  [refs: ThunderPropagator#4]
+# Triggered on every push/PR to develop and all feature/* branches.
+# Does NOT publish packages — use arc-beta-ci.yml / arc-release-ci.yml for that.
+name: CI — Build & Test
+
+on:
+  push:
+    branches:
+      - develop
+      - 'feature/**'
+      - 'bugfix/**'
+      - 'hotfix/**'
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test (.NET ${{ matrix.dotnet }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        dotnet: ['10.x']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET ${{ matrix.dotnet }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ matrix.dotnet }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (Debug)
+        run: dotnet build --no-restore --configuration Debug
+
+      - name: Build (Release)
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Run tests
+        run: |
+          dotnet test \
+            --no-build \
+            --configuration Debug \
+            --logger "trx;LogFileName=test-results.trx" \
+            --results-directory ./TestResults \
+            --verbosity normal
+        continue-on-error: false
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.dotnet }}
+          path: ./TestResults/*.trx
+          retention-days: 7

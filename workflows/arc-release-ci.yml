@@ -1,0 +1,215 @@
+name: Release tag, Pack & Publish (release/*)
+
+on:
+  push:
+    branches:
+      - release/**
+  workflow_dispatch: {}
+
+permissions:
+  contents: write        # commit & tag
+  actions: write         # delete artifacts via gh api
+  packages: write        # publish to GitHub Packages and set visibility
+
+jobs:
+  # --- 1) finalize version: strip -beta.*, commit if changed, create & push tag, GH Release ---
+  finalize-and-tag:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Ensure Directory.Build.props exists
+        run: |
+          test -f Directory.Build.props || { echo "Directory.Build.props not found."; exit 1; }
+
+      - name: Finalize version (strip prerelease) using helper script
+        id: ver
+        shell: pwsh
+        run: |
+          pwsh ./.github/scripts/update-version.ps1 -Channel release -CommitAndTag
+
+      - name: Generate release notes
+        shell: pwsh
+        run: |
+          $lastTag = git describe --tags --abbrev=0 2>$null
+          if ($lastTag) {
+            pwsh ./.github/scripts/generate-release-notes.ps1 -Before $lastTag -After HEAD
+          } else {
+            pwsh ./.github/scripts/generate-release-notes.ps1
+          }
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: v${{ steps.ver.outputs.version }}
+          body_path: release-notes.txt
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+  # --- 1b) propagate finalized version into 'develop' and push ---
+  sync-develop-version:
+    needs: finalize-and-tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: develop
+
+      - name: Update Directory.Build.props on develop to release version (helper)
+        shell: pwsh
+        env:
+          STABLE_VERSION: ${{ needs.finalize-and-tag.outputs.version }}
+        run: |
+          pwsh ./.github/scripts/update-version.ps1 -SetVersion $env:STABLE_VERSION          
+
+      - name: Commit & push to develop (skip CI)
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit on develop."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Directory.Build.props
+          git commit -m "chore: sync version from release to develop [skip ci]"
+          git fetch origin develop
+          git pull --rebase origin develop
+          git push origin HEAD:develop
+
+  
+  # --- 2) pack matrix & upload artifacts ---
+  pack:
+    needs: finalize-and-tag
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+        platform_in: [ AnyCpu, x86, x64, ARM64 ]
+        configuration: [ Debug, Release ]
+    steps:
+      - name: Checkout finalized tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: refs/tags/v${{ needs.finalize-and-tag.outputs.version }}
+
+      - name: Setup .NET (8.0.x & 9.0.x & 10.0.x for packing)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Build and Pack
+        id: pack
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          pwsh ./.github/scripts/pack-solution.ps1 `
+            -Configuration "${{ matrix.configuration }}" `
+            -Platform "${{ matrix.platform_in }}"
+
+      - name: Upload packages artifact (unique per leg)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.configuration }}${{ steps.pack.outputs.artifact_suffix }}
+          path: artifacts/pkg/*.nupkg
+          if-no-files-found: error
+
+      - name: Upload symbols (optional, unique per leg)
+        if: ${{ hashFiles('artifacts/pkg/*.snupkg') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: symbols-${{ matrix.configuration }}${{ steps.pack.outputs.artifact_suffix }}
+          path: artifacts/pkg/*.snupkg
+          if-no-files-found: ignore
+
+  # --- 3) publish to GitHub Packages AND NuGet.org simultaneously ---
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for scripts)
+        uses: actions/checkout@v4
+        with: { sparse-checkout: .github/scripts }
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with: { dotnet-version: 8.0.x }
+
+      - name: Download all packages artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          path: ./dist/packages
+          merge-multiple: true
+
+      - name: Download all symbols artifacts (optional)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: symbols-*
+          path: ./dist/symbols
+          merge-multiple: true
+
+      - name: Publish packages to GitHub Packages (public)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          pwsh ./.github/scripts/publish-packages.ps1 `
+            -NuGetSource 'https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json' `
+            -NuGetApiKey $env:GH_TOKEN `
+            -MakePublic `
+            -GitHubApiToken $env:GH_TOKEN `
+            -SkipCleanup
+
+      - name: Publish packages to NuGet.org (Release AnyCPU only)
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if (-not $env:NUGET_API_KEY) { 
+            Write-Host 'NUGET_API_KEY secret not set; skipping NuGet.org publish.' 
+            exit 0 
+          }
+          # Only publish Release AnyCPU packages (exclude Debug, ARM64, x86, x64 variants)
+          pwsh ./.github/scripts/publish-packages.ps1 `
+            -NuGetSource 'https://api.nuget.org/v3/index.json' `
+            -NuGetApiKey $env:NUGET_API_KEY `
+            -FilterPattern '^(?!.*\.(Debug|ARM64|x86|x64)).*\.nupkg$'
+
+  # --- 4) cleanup: delete ALL run artifacts after publish job completes ---
+  cleanup:
+    needs: [publish]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Delete ALL run artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
+            --paginate --jq '.artifacts[].id' | while read -r id; do
+            echo "Deleting artifact id=$id"
+            gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
+          done
