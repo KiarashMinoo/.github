@@ -1,0 +1,124 @@
+name: Reusable — Beta CI (develop)
+
+on:
+  workflow_call:
+    inputs:
+      dotnet-versions:
+        description: .NET SDK versions to install
+        type: string
+        default: |
+          8.0.x
+          9.0.x
+          10.0.x
+      solution-path:
+        description: Path to .sln or project glob
+        type: string
+        default: '**/*.sln'
+    secrets:
+      gh-token:
+        description: GitHub token for release notes
+        required: true
+
+permissions:
+  contents: write        # commit & tag
+  actions: write         # delete artifacts via gh api
+  packages: write        # publish to GitHub Packages
+
+jobs:
+  # --- 1) bump on develop: patch++ & -beta.N, commit with version in message, TAG ---
+  bump-beta:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Bump version using helper script (or update .csproj if no Directory.Build.props)
+        id: bump
+        shell: pwsh
+        run: |
+          if (Test-Path 'Directory.Build.props') {
+            pwsh ./.github/scripts/update-version.ps1 -Channel beta -CommitAndTag
+          } else {
+            Write-Host 'Directory.Build.props not found, will update .csproj files directly'
+            pwsh ./.github/scripts/update-version.ps1 -Channel beta -CommitAndTag -UpdateCsproj
+          }
+
+  # --- 2) pack matrix (sln only), add filtered release notes, upload artifacts ---
+  pack:
+    needs: bump-beta
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        platform_in: [AnyCpu, x86, x64, ARM64]
+        configuration: [Debug, Release]
+
+    steps:
+      - name: Checkout bumped tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: refs/tags/v${{ needs.bump-beta.outputs.version }}
+
+      - name: Show version from checked-out ref
+        shell: pwsh
+        run: |
+          pwsh ./.github/scripts/show-version.ps1
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Generate release notes
+        shell: pwsh
+        run: |
+          pwsh ./.github/scripts/generate-release-notes.ps1 `
+            -Before "${{ github.event.before }}" `
+            -After "${{ github.sha }}" `
+            -SetGitHubEnv
+
+      - name: Build and Pack
+        id: pack
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          $releaseNotes = if ($env:REL_NOTES) { $env:REL_NOTES } else { "" }
+          $params = @{
+            Configuration = "${{ matrix.configuration }}"
+            Platform = "${{ matrix.platform_in }}"
+            ReleaseNotes = $releaseNotes
+          }
+          pwsh ./.github/scripts/pack-solution.ps1 @params
+
+      - name: Upload packages artifact (unique per leg)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.configuration }}${{ steps.pack.outputs.artifact_suffix }}
+          path: artifacts/pkg/*.nupkg
+          if-no-files-found: error
+
+      - name: Upload symbols (optional, unique per leg)
+        if: ${{ hashFiles('artifacts/pkg/*.snupkg') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: symbols-${{ matrix.configuration }}${{ steps.pack.outputs.artifact_suffix }}
+          path: artifacts/pkg/*.snupkg
+          if-no-files-found: ignore
