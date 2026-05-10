@@ -120,7 +120,9 @@ else {
                     $pkgVersion = $Matches['version']
                     Write-Host "  Replace requested: attempting to delete existing $pkgId $pkgVersion from feed..." -ForegroundColor Yellow
                     dotnet nuget delete $pkgId $pkgVersion --source $NuGetSource --api-key $NuGetApiKey --non-interactive --yes 2>&1 | Out-Null
-                    if ($LASTEXITCODE -eq 0) { Write-Host "  Deleted existing $pkgId $pkgVersion (if present)" -ForegroundColor Yellow }
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "  Deleted existing $pkgId $pkgVersion (if present)" -ForegroundColor Yellow 
+                    }
                 }
                 else {
                     Write-Host "  Could not parse package id/version from '$($pkg.Name)'; skipping pre-delete." -ForegroundColor DarkYellow
@@ -265,8 +267,8 @@ if ($MakePublic -and $NuGetSource -match 'nuget.pkg.github.com') {
                 Write-Host "GitHub CLI not available, using REST API..." -ForegroundColor Gray
                 
                 $headers = @{
-                    'Authorization' = "Bearer $GitHubApiToken"
-                    'Accept' = 'application/vnd.github+json'
+                    'Authorization'        = "Bearer $GitHubApiToken"
+                    'Accept'               = 'application/vnd.github+json'
                     'X-GitHub-Api-Version' = '2022-11-28'
                 }
                 

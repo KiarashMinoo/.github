@@ -14,17 +14,17 @@ param(
     [switch]$ShowProgress,
 
     # Optional tuning:
-  [string[]]$ExcludeRegex = @(),   # extra patterns to skip entirely (additive to defaults)
-  [string[]]$CollapseRegex = @(),  # extra patterns to collapse into a count
-  [int]$MaxContributors = 10,      # top N contributors listed per tag
-  [switch]$IncludeNoise,           # show everything (disable default noise filters/collapses)
-  [switch]$ShowAuthorAndDate,      # include author and short ISO date on each bullet
-  [int]$MaxHighlights = 0,         # limit per-group bullets (0 = no limit)
+    [string[]]$ExcludeRegex = @(),   # extra patterns to skip entirely (additive to defaults)
+    [string[]]$CollapseRegex = @(),  # extra patterns to collapse into a count
+    [int]$MaxContributors = 10,      # top N contributors listed per tag
+    [switch]$IncludeNoise,           # show everything (disable default noise filters/collapses)
+    [switch]$ShowAuthorAndDate,      # include author and short ISO date on each bullet
+    [int]$MaxHighlights = 0,         # limit per-group bullets (0 = no limit)
 
-  # Optional files/snippets
-  [switch]$IncludeFiles,
-  [int]$FileLimit = 5,
-  [switch]$IncludeSnippets,
+    # Optional files/snippets
+    [switch]$IncludeFiles,
+    [int]$FileLimit = 5,
+    [switch]$IncludeSnippets,
     [ValidateSet('none', 'diff-hunks', 'added-lines')] [string]$ContentsMode = 'none',
     [int]$HunkLimit = 2,
     [int]$LinesPerHunk = 40,
@@ -724,26 +724,36 @@ function Render-Group {
         [System.Collections.Generic.HashSet[string]]$highlightSet,
         [int]$maxHighlights = 0
     )
-    if (-not $items -or $items.Count -eq 0) { return }
+    if (-not $items -or $items.Count -eq 0) {
+        return 
+    }
 
     $total = $items.Count
     [void]$sbRef.AppendLine("### $title ($total)")
 
     $limit = if ($maxHighlights -gt 0) {
         [Math]::Min($maxHighlights, $total)
-    } else {
+    }
+    else {
         $total
     }
 
     for ($i = 0; $i -lt $limit; $i++) {
         $line = [string]$items[$i]
-        if ($highlightSet) { $null = $highlightSet.Add($line) }
+        if ($highlightSet) {
+            $null = $highlightSet.Add($line) 
+        }
         [void]$sbRef.AppendLine($line)
     }
 
     if ($total -gt $limit) {
         $remaining = $total - $limit
-        $suffix = if ($remaining -eq 1) { "commit" } else { "commits" }
+        $suffix = if ($remaining -eq 1) {
+            "commit" 
+        }
+        else {
+            "commits" 
+        }
         [void]$sbRef.AppendLine("- _...and $remaining more ${suffix}_")
     }
 

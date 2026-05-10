@@ -11,17 +11,19 @@ Act autonomously and **do not ask for confirmations**. Use safe defaults. Make i
 ---
 
 ## 0) Global behavior (no arguments)
+
 - Always perform a **full scan** of the repository.
 - **Reuse** existing test projects named:
   - `ThunderPropagator.UnitTests`
   - `ThunderPropagator.ArchTests`
 - If missing, **create** them under `Tests/UnitTests` and `Tests/ArchTests`.
-- **Always** make sure both projects are inside a **solution (`.sln`)** under a solution folder named **`Tests`**.  
+- **Always** make sure both projects are inside a **solution (`.sln`)** under a solution folder named **`Tests`**.
   - If no `.sln` exists, create one at the repo root (name it after the repo folder).
 
 ---
 
 ## 1) Discovery (filesystem, deep, no depth limit)
+
 - Walk the entire repo except:
   - `Tests/**`
   - `.git`, `.github` (keep `.github/prompts`), `.vs`, `.idea`
@@ -34,6 +36,7 @@ Act autonomously and **do not ask for confirmations**. Use safe defaults. Make i
 When creating test file paths, **drop common root segments** if they appear at the start of a path (case-insensitive):  
 `src`, `source`, `app`, `apps`, `packages`, `projects`, `modules`.  
 Examples:
+
 - `src/Infrastructure/Pipelines/ChannelService.cs` → `Infrastructure/Pipelines/ChannelServiceTests.cs`
 - `app/Application/Channel/Direct.cs` → `Application/Channel/DirectTests.cs`
 
@@ -42,16 +45,19 @@ Examples:
 ## 2) Test projects (reuse or create)
 
 ### Reuse if found
+
 - Search for csproj whose filename or `<AssemblyName>` equals **ThunderPropagator.UnitTests** and **ThunderPropagator.ArchTests** (case-insensitive).
 - Record absolute paths; **keep original names/locations**.
 
 ### Create if missing
+
 - `Tests/UnitTests/UnitTests.csproj`
 - `Tests/ArchTests/ArchTests.csproj`
 
 **csproj baselines (only when creating new)**
 
 **UnitTests.csproj**
+
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -72,3 +78,4 @@ Examples:
     </PackageReference>
   </ItemGroup>
 </Project>
+```

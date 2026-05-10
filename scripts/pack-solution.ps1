@@ -42,20 +42,20 @@
 #>
 
 param(
-    [Parameter(Mandatory = $true)]
-    [ValidateSet('Debug', 'Release')]
-    [string]$Configuration,
+  [Parameter(Mandatory = $true)]
+  [ValidateSet('Debug', 'Release')]
+  [string]$Configuration,
     
-    [Parameter(Mandatory = $true)]
-    [ValidateSet('AnyCpu', 'x86', 'x64', 'ARM64')]
-    [string]$Platform,
+  [Parameter(Mandatory = $true)]
+  [ValidateSet('AnyCpu', 'x86', 'x64', 'ARM64')]
+  [string]$Platform,
     
-    [string]$SolutionPath,
-    [string]$OutputDir = 'artifacts/pkg',
-    [switch]$SkipClean,
-    [switch]$SkipRestore,
-    [switch]$SkipBuild,
-    [string]$ReleaseNotes = ''
+  [string]$SolutionPath,
+  [string]$OutputDir = 'artifacts/pkg',
+  [switch]$SkipClean,
+  [switch]$SkipRestore,
+  [switch]$SkipBuild,
+  [string]$ReleaseNotes = ''
 )
 
 Set-StrictMode -Version Latest
@@ -67,15 +67,20 @@ Write-Host "Platform: $Platform"
 
 # Normalize platform for solution builds
 $platformSol = if ($Platform -match '^[Aa]ny[Cc]pu$') { 
-    'Any CPU' 
+  'Any CPU' 
 }
 else { 
-    $Platform 
+  $Platform 
 }
 Write-Host "Platform (normalized): $platformSol"
 
 # Determine artifact suffix (used by workflow artifact names)
-$artifactSuffix = if ($Platform -match '^[Aa]ny[Cc]pu$') { '' } else { "-$Platform" }
+$artifactSuffix = if ($Platform -match '^[Aa]ny[Cc]pu$') {
+  '' 
+}
+else {
+  "-$Platform" 
+}
 
 # Export platform and artifact suffix to GitHub Actions if available
 if ($env:GITHUB_OUTPUT) {
@@ -99,60 +104,60 @@ if (-not $SolutionPath) {
 }
 
 if (-not (Test-Path $SolutionPath)) {
-    Write-Error "Solution file not found: $SolutionPath"
-    exit 1
+  Write-Error "Solution file not found: $SolutionPath"
+  exit 1
 }
 
 Write-Host "Solution: $SolutionPath" -ForegroundColor Green
 
 # Clean
 if (-not $SkipClean) {
-    Write-Host "`n--- Clean ---" -ForegroundColor Yellow
-    dotnet clean $SolutionPath --nologo `
-        -c $Configuration `
-        -p:Platform="$platformSol"
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE 
-    }
+  Write-Host "`n--- Clean ---" -ForegroundColor Yellow
+  dotnet clean $SolutionPath --nologo `
+    -c $Configuration `
+    -p:Platform="$platformSol"
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE 
+  }
 }
 
 # Restore
 if (-not $SkipRestore) {
-    Write-Host "`n--- Restore ---" -ForegroundColor Yellow
-    dotnet restore $SolutionPath --nologo -p:Platform="$platformSol"
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE 
-    }
+  Write-Host "`n--- Restore ---" -ForegroundColor Yellow
+  dotnet restore $SolutionPath --nologo -p:Platform="$platformSol"
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE 
+  }
 }
 
 # Build
 if (-not $SkipBuild) {
-    Write-Host "`n--- Build ---" -ForegroundColor Yellow
-    dotnet build $SolutionPath --nologo `
-        -c $Configuration `
-        -p:Platform="$platformSol" `
-        -p:ContinuousIntegrationBuild=true `
-        --no-restore
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE 
-    }
+  Write-Host "`n--- Build ---" -ForegroundColor Yellow
+  dotnet build $SolutionPath --nologo `
+    -c $Configuration `
+    -p:Platform="$platformSol" `
+    -p:ContinuousIntegrationBuild=true `
+    --no-restore
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE 
+  }
 }
 
 # Pack
 Write-Host "`n--- Pack ---" -ForegroundColor Yellow
 if (-not (Test-Path $OutputDir)) {
-    New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+  New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 }
 
 $packArgs = @(
-    'pack'
-    $SolutionPath
-    '--nologo'
-    '-c', $Configuration
-    '-p:Platform=' + $platformSol
-    '-p:ContinuousIntegrationBuild=true'
-    '-o', $OutputDir
-    '--no-build'
+  'pack'
+  $SolutionPath
+  '--nologo'
+  '-c', $Configuration
+  '-p:Platform=' + $platformSol
+  '-p:ContinuousIntegrationBuild=true'
+  '-o', $OutputDir
+  '--no-build'
 )
 
 if (-not [string]::IsNullOrWhiteSpace($ReleaseNotes)) {
@@ -173,8 +178,8 @@ Remove-Item -Path $markerFail -Force -ErrorAction SilentlyContinue
 
 & dotnet @packArgs
 if ($LASTEXITCODE -ne 0) {
-    New-Item -ItemType File -Path $markerFail -Force | Out-Null
-    exit $LASTEXITCODE 
+  New-Item -ItemType File -Path $markerFail -Force | Out-Null
+  exit $LASTEXITCODE 
 }
 
 # Create success marker
@@ -185,15 +190,15 @@ Write-Host "`n=== Pack Complete ===" -ForegroundColor Green
 $packages = Get-ChildItem -Path $OutputDir -Filter '*.nupkg' | Select-Object -ExpandProperty Name
 Write-Host "Packages created ($($packages.Count)):"
 foreach ($pkg in $packages) {
-    Write-Host "  - $pkg" -ForegroundColor Cyan
+  Write-Host "  - $pkg" -ForegroundColor Cyan
 }
 
 $symbols = Get-ChildItem -Path $OutputDir -Filter '*.snupkg' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
 if ($symbols) {
-    Write-Host "Symbols created ($($symbols.Count)):"
-    foreach ($sym in $symbols) {
-        Write-Host "  - $sym" -ForegroundColor Cyan
-    }
+  Write-Host "Symbols created ($($symbols.Count)):"
+  foreach ($sym in $symbols) {
+    Write-Host "  - $sym" -ForegroundColor Cyan
+  }
 }
 
 Write-Host "`nOutput directory: $OutputDir" -ForegroundColor Green

@@ -142,18 +142,6 @@ jobs:
           path: ./dist/symbols
           merge-multiple: true
 
-#      - name: Publish packages to GitHub Packages (public)
-#        shell: pwsh
-#        env:
-#          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-#        run: |
-#          pwsh ./.github/scripts/publish-packages.ps1 `
-#            -NuGetSource 'https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json' `
-#            -NuGetApiKey $env:GH_TOKEN `
-#            -MakePublic `
-#            -GitHubApiToken $env:GH_TOKEN `
-#            -SkipCleanup
-
       - name: Publish packages to NuGet.org (Release AnyCPU only)
         shell: pwsh
         env:

@@ -105,7 +105,9 @@ function CSV([string]$s) {
 $Types = @('feat', 'fix', 'perf', 'refactor', 'docs', 'chore', 'build', 'ci', 'test', 'style', 'revert', 'deps', 'other')
 $Skip = New-Object 'System.Collections.Generic.HashSet[string]'
 foreach ($val in (CSV $SkipTypes | % { $_.ToLowerInvariant() })) {
-    if ($val) { $null = $Skip.Add($val) }
+    if ($val) {
+        $null = $Skip.Add($val) 
+    }
 }
 function T([string]$sub) {
     $m = [regex]::Match($sub, '^(?<t>\w+)(\([^)]*\))?:\s+'); if ($m.Success -and ($Types -contains $m.Groups['t'].Value.ToLowerInvariant())) {
@@ -116,7 +118,7 @@ function T([string]$sub) {
     }
 }
 function Tags([regex]$re) {
-    ,@((G "tag -l --sort=-creatordate") -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $re.IsMatch($_) })
+    , @((G "tag -l --sort=-creatordate") -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $re.IsMatch($_) })
 }
 function Head() {
     (G "rev-parse HEAD").Trim()
@@ -127,7 +129,8 @@ function Branch() {
 function StateLoad($p) {
     if ([IO.Path]::IsPathRooted($p)) {
         $fullPath = $p
-    } else {
+    }
+    else {
         $fullPath = [IO.Path]::Combine((Get-RepoPath), $p)
     }
 
@@ -143,7 +146,8 @@ function StateLoad($p) {
 function StateSave($p, $o) {
     if ([IO.Path]::IsPathRooted($p)) {
         $fullPath = $p
-    } else {
+    }
+    else {
         $fullPath = [IO.Path]::Combine((Get-RepoPath), $p)
     }
 
@@ -252,14 +256,20 @@ foreach ($r in $ranges) {
         $items = $items | Where-Object {
             $sha = $_.Sha
             $names = G "show --name-only --pretty=format:'' $sha"
-            if (-not $names) { return $true }
+            if (-not $names) {
+                return $true 
+            }
 
             foreach ($f in ($names -split "`n")) {
                 $n = $f.Trim()
-                if (-not $n) { continue }
+                if (-not $n) {
+                    continue 
+                }
 
                 $normalized = ($n -replace '\\', '/')
-                if (-not $normalized) { continue }
+                if (-not $normalized) {
+                    continue 
+                }
 
                 $isExcluded = $false
                 if ($hasExc) {
@@ -271,12 +281,15 @@ foreach ($r in $ranges) {
                         }
                     }
                 }
-                if ($isExcluded) { continue }
+                if ($isExcluded) {
+                    continue 
+                }
 
                 $matchesInclude = $false
                 if (-not $hasInc) {
                     $matchesInclude = $true
-                } else {
+                }
+                else {
                     foreach ($i in $inc) {
                         $pattern = ($i -replace '\*\*', '*')
                         if ($normalized -like $pattern) {
@@ -286,7 +299,9 @@ foreach ($r in $ranges) {
                     }
                 }
 
-                if ($matchesInclude) { return $true }
+                if ($matchesInclude) {
+                    return $true 
+                }
             }
 
             return $false
@@ -341,7 +356,8 @@ $begin = '<!-- BEGIN AUTO-RELEASE-NOTES -->'; $end = '<!-- END AUTO-RELEASE-NOTE
 $block = "$begin`r`n$($sb.ToString() )`r`n$end`r`n"
 if ([IO.Path]::IsPathRooted($Output)) {
     $full = $Output
-} else {
+}
+else {
     $full = [IO.Path]::Combine((Get-RepoPath), $Output)
 }
 $dir = [IO.Path]::GetDirectoryName($full); if ($dir -and -not (Test-Path $dir)) {

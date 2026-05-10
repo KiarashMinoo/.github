@@ -185,7 +185,8 @@ foreach ($entry in $jobs) {
             Get-Content $entry.Err -Raw | Out-File -FilePath $entry.Log -Append -Encoding utf8
             Remove-Item $entry.Err -Force -ErrorAction SilentlyContinue
         }
-        catch { }
+        catch { 
+        }
     }
     
     # Check marker files first (most reliable)
@@ -206,7 +207,8 @@ foreach ($entry in $jobs) {
             continue
         }
     }
-    catch { }
+    catch { 
+    }
     
     # Fallback: check process exit code if available
     if ($entry.Process -and $entry.Process.HasExited) {

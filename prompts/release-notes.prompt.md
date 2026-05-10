@@ -1,12 +1,13 @@
 ---
-mode: 'agent'
-description: 'Generate/update release notes with content-aware summaries; optimized for C++ (.cpp/.hpp), supports incremental updates via last processed commit state'
-tools: ['runCommands', 'editFiles', 'search/codebase']
+mode: "agent"
+description: "Generate/update release notes with content-aware summaries; optimized for C++ (.cpp/.hpp), supports incremental updates via last processed commit state"
+tools: ["runCommands", "editFiles", "search/codebase"]
 ---
 
 # Goal
 
 Generate or update **${input:outputFile:CHANGELOG.md}** from git tags and commits with **content-aware analysis** focused on **C/C++** sources/headers while still handling all file types.
+
 - Include an **Unreleased** section comparing the selected start point to `HEAD` (latest tag by default, or last processed commit if state exists and refresh is not requested).
 - Group commits by Conventional Commit type (feat, fix, perf, refactor, docs, chore, build, ci, test, style, revert, deps, other).
 - Derive smart summaries using **diff contents**: API/ABI changes in headers, function signature changes, template/class updates, build system changes (CMake/Conan/vcpkg/Bazel), config/security/perf notes.
@@ -28,6 +29,7 @@ Generate or update **${input:outputFile:CHANGELOG.md}** from git tags and commit
 - **💾 State file path**: ${input:stateFile:.github/release-notes.state.json}
 
 ## Scope & Presentation
+
 - **Summary style** (`concise` | `standard` | `detailed`): ${input:summaryStyle:standard}
 - **Max highlights per tag**: ${input:maxHighlights:6}
 - **Max bullets per section** (0 = unlimited): ${input:maxBulletsPerSection:0}
@@ -36,24 +38,26 @@ Generate or update **${input:outputFile:CHANGELOG.md}** from git tags and commit
 - **Snippet max chars**: ${input:snippetLimit:320}
 
 ## Diff & Analysis Controls
+
 - **Diff context lines** (0..5): ${input:diffContext:0}
 - **Max files per commit** (0 = unlimited): ${input:fileLimit:0}
 - **Max hunks per file** (0 = unlimited): ${input:hunkLimit:2}
 - **Max lines per hunk** (0 = unlimited): ${input:linesPerHunk:40}
 - **Max total diff lines per commit**: ${input:linesPerCommit:300}
-- **Include paths (glob, comma-separated)**: ${input:pathInclude:**/*.{h,hpp,hxx,hh,c,cc,cpp,cxx},CMakeLists.txt,**/*.cmake,conanfile.*,vcpkg.json,**/*.bazel,WORKSPACE,.clang-format,.clang-tidy}
+- **Include paths (glob, comma-separated)**: ${input:pathInclude:**/\*.{h,hpp,hxx,hh,c,cc,cpp,cxx},CMakeLists.txt,**/_.cmake,conanfile._,vcpkg.json,\*_/_.bazel,WORKSPACE,.clang-format,.clang-tidy}
 - **Exclude paths (glob, comma-separated)**: ${input:pathExclude:}
 - **Skip types (comma-separated)**: ${input:skipTypes:}
 - **Fold empty sections**: ${input:foldEmpty:true}
 
 ## Contents Modes
+
 - **🧩 Include diff contents**: ${input:includeContents:true}
 - **Contents mode** (`diff-hunks` | `added-lines` | `removed-lines` | `api-changes`): ${input:contentsMode:api-changes}
 - **Language mode** (`auto` | `cpp`): ${input:languageMode:cpp}
 
 # Plan
 
-1. **Determine start point (incremental vs full)**  
+1. **Determine start point (incremental vs full)**
    - Compute `HEAD_SHA=$(git rev-parse HEAD)` and `BRANCH=$(git rev-parse --abbrev-ref HEAD)`.
    - If **resetAll=true** → **full** run from tags; delete `${input:stateFile}` if present.
    - Else if **refresh=true** → **full** run from tags; ignore `${input:stateFile}`.
@@ -86,16 +90,16 @@ Generate or update **${input:outputFile:CHANGELOG.md}** from git tags and commit
    - Recommended for analysis (files + hunks):
      ```bash
      git log --date=short \
-  --pretty=format:'@@@%H%x09%h%x09%ad%x09%s%x09%an' \
-  --name-status --patch --unified=${input:diffContext:0} --text \
-  <RANGE> --
+     --pretty=format:'@@@%H%x09%h%x09%ad%x09%s%x09%an' \
+     --name-status --patch --unified=${input:diffContext:0} --text \
+     <RANGE> --
      ```
    - Enforce **fileLimit**, **hunkLimit**, **linesPerHunk**, **linesPerCommit** when rendering.
 
 4. **C/C++-aware analysis rules**  
    (API/ABI detection in headers, function signatures, templates, build system changes, etc. — same as previous version.)
 
-5. **Render & write**  
+5. **Render & write**
    - If **incremental**: update only the **Unreleased** section with the commits in `START_SHA..HEAD`, preserving previous tag sections.
    - If **full**: render Unreleased + all tag sections (respecting `${input:foldEmpty}`).
    - Write to `${input:outputFile}`:
@@ -107,7 +111,7 @@ Generate or update **${input:outputFile:CHANGELOG.md}** from git tags and commit
        <!-- END AUTO-RELEASE-NOTES -->
        ```
 
-6. **Persist state**  
+6. **Persist state**
    - After a successful run, write `${input:stateFile}` JSON with:
      ```json
      {
@@ -169,4 +173,4 @@ fi
 
 # Now execute
 
-1) Resolve start SHA (state vs refresh). 2) Collect logs for chosen ranges. 3) Analyze diffs. 4) Update Unreleased (incremental) or rebuild (full). 5) Persist `lastProcessedSha`. 6) Print a concise report.
+1. Resolve start SHA (state vs refresh). 2) Collect logs for chosen ranges. 3) Analyze diffs. 4) Update Unreleased (incremental) or rebuild (full). 5) Persist `lastProcessedSha`. 6) Print a concise report.
