@@ -25,6 +25,10 @@ This repository centralizes reusable GitHub Actions workflows to avoid duplicati
     pack-solution.ps1             # Build and pack NuGet packages
     publish-packages.ps1          # Publish packages to NuGet.org
     (other helper scripts)
+  prompts/
+    release-notes.prompt.md       # AI-driven changelog generation
+    repo-docs.prompt.md           # AI-driven documentation generation
+    repo-tests.prompt.md          # AI-driven test generation
 ```
 
 ## Workflows
@@ -203,6 +207,96 @@ All repositories must copy these scripts from `.github/scripts/`:
 
 ---
 
+## AI Prompts for Code Generation & Documentation
+
+This repository includes reusable GitHub Copilot prompts for autonomous code generation tasks. Copy the `prompts` folder to your target repository and use them with Copilot Chat.
+
+### Available Prompts
+
+#### 1. Changelog Generator (`release-notes.prompt.md`)
+
+**Purpose**: Automatically generate or update `CHANGELOG.md` from git commits  
+**Features**:
+- Per-branch incremental tracking (resumes from last processed commit)
+- Release mode: generates from previous release tag to current tag
+- Conventional Commit grouping (feat, fix, perf, refactor, etc.)
+- State management via `.github/changelog-state.json`
+
+#### 2. Documentation Generator (`repo-docs.prompt.md`)
+
+**Purpose**: Automatically generate rich documentation structure under `/docs`  
+**Features**:
+- Deep recursion: creates `/docs/<path>/README.md` for every folder
+- Auto-generates Docs Catalog in root README
+- Extracts NuGet package metadata from `.csproj` files
+- Mermaid diagrams per folder
+- Idempotent (safe to run multiple times)
+
+#### 3. Test Generator (`repo-tests.prompt.md`)
+
+**Purpose**: Automatically generate unit and architecture tests  
+**Features**:
+- Reuses or creates `UnitTests` and `ArchTests` projects under `Tests/` folder
+- xUnit + NSubstitute + FluentAssertions unit tests
+- NetArchTest architecture tests for API contracts
+- Targets `net10.0` with preview features
+- Never modifies production code
+
+### How to Use Prompts in Your Repository
+
+**Copy prompts to your repository**:
+```bash
+cp -r .github/prompts <target-repo>/.github/prompts/
+```
+
+**Usage in Copilot Chat** — Use the `@workspace` agent with file reference:
+```
+@workspace #file:.github/prompts/<prompt-name>.md
+
+[Your instructions]
+```
+
+**Examples:**
+
+Generate Changelog:
+```
+@workspace #file:.github/prompts/release-notes.prompt.md
+
+Generate changelog for the repository.
+```
+
+Generate Documentation:
+```
+@workspace #file:.github/prompts/repo-docs.prompt.md
+
+Generate documentation for all folders with reset=true.
+```
+
+Generate Tests:
+```
+@workspace #file:.github/prompts/repo-tests.prompt.md
+
+Generate unit tests and architecture tests for this repository.
+```
+
+### State Files (for incremental updates)
+
+Commit these files to enable resuming from the last run:
+- `.github/changelog-state.json` — Per-branch tracking
+- `.github/docs-state.json` — Folder cache
+
+Do not modify these manually; they're auto-managed by prompts.
+
+### Customization
+
+Edit prompts in `.github/prompts/` to match your repository's conventions:
+- Path prefixes to strip (company name, project prefix)
+- NuGet feed URLs
+- Test framework choices
+- Documentation structure and folder depth
+
+---
+
 ## Troubleshooting
 
 ### Workflow fails: "Directory.Build.props not found"
@@ -217,14 +311,20 @@ All repositories must copy these scripts from `.github/scripts/`:
 - Confirm API key has appropriate package permissions
 - Check package version doesn't already exist on NuGet.org
 
+### Prompts not generating complete results
+- Ensure all source files are readable (not in .gitignore)
+- Check Copilot Chat context window isn't exceeded
+- Try `incremental=true` or `dryRun=true` to debug
+
 ---
 
 ## Contributing
 
-To update workflows or scripts:
+To update workflows, scripts, or prompts:
 1. Edit files in this repository
 2. Test changes in a test branch before merging to `main`
-3. All dependent repos will automatically use updated workflows on next CI run (workflows reference `@main`)
+3. All dependent repos will automatically use updated workflows on next CI run
+4. For prompts, publish updates to the `.github/prompts/` folder
 
 ---
 
