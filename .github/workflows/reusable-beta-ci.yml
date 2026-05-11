@@ -41,15 +41,24 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.gh-token }}
 
+      - name: Checkout workflow scripts
+        uses: actions/checkout@v4
+        with:
+          repository: KiarashMinoo/.github
+          ref: main
+          sparse-checkout: .github/scripts
+          path: .ci-scripts
+          token: ${{ secrets.gh-token }}
+
       - name: Bump version using helper script (or update .csproj if no Directory.Build.props)
         id: bump
         shell: pwsh
         run: |
           if (Test-Path 'Directory.Build.props') {
-            pwsh ./.github/scripts/update-version.ps1 -Channel beta -CommitAndTag
+            pwsh ./.ci-scripts/.github/scripts/update-version.ps1 -Channel beta -CommitAndTag
           } else {
             Write-Host 'Directory.Build.props not found, will update .csproj files directly'
-            pwsh ./.github/scripts/update-version.ps1 -Channel beta -CommitAndTag -UpdateCsproj
+            pwsh ./.ci-scripts/.github/scripts/update-version.ps1 -Channel beta -CommitAndTag -UpdateCsproj
           }
 
   # --- 2) pack matrix (sln only), add filtered release notes, upload artifacts ---
@@ -70,10 +79,19 @@ jobs:
           fetch-depth: 0
           ref: refs/tags/v${{ needs.bump-beta.outputs.version }}
 
+      - name: Checkout workflow scripts
+        uses: actions/checkout@v4
+        with:
+          repository: KiarashMinoo/.github
+          ref: main
+          sparse-checkout: .github/scripts
+          path: .ci-scripts
+          token: ${{ secrets.gh-token }}
+
       - name: Show version from checked-out ref
         shell: pwsh
         run: |
-          pwsh ./.github/scripts/show-version.ps1
+          pwsh ./.ci-scripts/.github/scripts/show-version.ps1
       
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -94,7 +112,7 @@ jobs:
       - name: Generate release notes
         shell: pwsh
         run: |
-          pwsh ./.github/scripts/generate-release-notes.ps1 `
+          pwsh ./.ci-scripts/.github/scripts/generate-release-notes.ps1 `
             -Before "${{ github.event.before }}" `
             -After "${{ github.sha }}" `
             -SetGitHubEnv
@@ -103,7 +121,7 @@ jobs:
         id: pack
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.gh-token }}
         run: |
           $releaseNotes = if ($env:REL_NOTES) { $env:REL_NOTES } else { "" }
           $params = @{
@@ -112,7 +130,7 @@ jobs:
             SolutionPath = "${{ inputs.solution-path }}"
             ReleaseNotes = $releaseNotes
           }
-          pwsh ./.github/scripts/pack-solution.ps1 @params
+          pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 @params
 
       - name: Upload packages artifact (unique per leg)
         uses: actions/upload-artifact@v4
@@ -134,9 +152,16 @@ jobs:
     needs: pack
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (for scripts)
+      - name: Checkout caller repository
         uses: actions/checkout@v4
-        with: { sparse-checkout: .github/scripts }
+      - name: Checkout workflow scripts
+        uses: actions/checkout@v4
+        with:
+          repository: KiarashMinoo/.github
+          ref: main
+          sparse-checkout: .github/scripts
+          path: .ci-scripts
+          token: ${{ secrets.gh-token }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -167,7 +192,7 @@ jobs:
             exit 0 
           }
           # Only publish Release AnyCPU packages (exclude Debug, ARM64, x86, x64 variants)
-          pwsh ./.github/scripts/publish-packages.ps1 `
+          pwsh ./.ci-scripts/.github/scripts/publish-packages.ps1 `
             -NuGetSource 'https://api.nuget.org/v3/index.json' `
             -NuGetApiKey $env:NUGET_API_KEY `
             -FilterPattern '^(?!.*\.(Debug|ARM64|x86|x64)).*\.nupkg$'
