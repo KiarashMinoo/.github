@@ -14,7 +14,7 @@
   Array of configurations (Debug,Release). Default: Release
 
 .PARAMETER SolutionPath
-  Optional path to the .sln file. If omitted, `pack-solution.ps1` will auto-discover.
+    Optional path to the .sln/.slnx file. If omitted, `pack-solution.ps1` will auto-discover.
 
 .PARAMETER OutputRoot
   Root directory where per-leg outputs/logs will be written. Default: artifacts/pkg-matrix

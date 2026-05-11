@@ -19,7 +19,7 @@
   Platform target (AnyCpu, x86, x64, ARM64)
 
 .PARAMETER SolutionPath
-  Optional: explicit solution file path. If not provided, auto-discovers single .sln at repo root.
+  Optional: explicit solution file path. If not provided, auto-discovers single .sln or .slnx at repo root.
 
 .PARAMETER OutputDir
   Directory for packed artifacts (default: artifacts/pkg)
@@ -39,6 +39,7 @@
 .EXAMPLE
   pwsh .github/scripts/pack-solution.ps1 -Configuration Release -Platform AnyCpu
   pwsh .github/scripts/pack-solution.ps1 -Configuration Debug -Platform x64 -SolutionPath MySolution.sln
+  pwsh .github/scripts/pack-solution.ps1 -Configuration Release -Platform AnyCpu -SolutionPath MySolution.slnx
 #>
 
 param(
@@ -90,17 +91,53 @@ if ($env:GITHUB_OUTPUT) {
 
 # Resolve solution file
 if (-not $SolutionPath) {
-  # Ensure the result is always an array so .Count works even when a single file is returned
-  $slnFiles = @(Get-ChildItem -Filter '*.sln' -File | Select-Object -ExpandProperty Name)
-  if ($slnFiles.Count -eq 0) {
-    Write-Error "No .sln file found at repo root. Specify -SolutionPath."
+  # Ensure the result is always an array so .Count works even when a single file is returned.
+  # Support both .sln and .slnx files at repo root.
+  $solutionFiles = @(
+    Get-ChildItem -File |
+      Where-Object { $_.Extension -in @('.sln', '.slnx') } |
+      Select-Object -ExpandProperty Name
+  )
+  if ($solutionFiles.Count -eq 0) {
+    Write-Error "No .sln or .slnx file found at repo root. Specify -SolutionPath."
     exit 1
   }
-  elseif ($slnFiles.Count -gt 1) {
-    Write-Error "Multiple .sln files found: $($slnFiles -join ', '). Specify -SolutionPath."
+  elseif ($solutionFiles.Count -gt 1) {
+    Write-Error "Multiple solution files found: $($solutionFiles -join ', '). Specify -SolutionPath."
     exit 1
   }
-  $SolutionPath = $slnFiles[0]
+  $SolutionPath = $solutionFiles[0]
+}
+elseif ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($SolutionPath)) {
+  $repoRoot = (Get-Location).Path
+  $globPattern = $SolutionPath.Replace('\\', '/')
+  $candidateFiles = @(
+    Get-ChildItem -Path $repoRoot -Recurse -File |
+      Where-Object {
+        $ext = $_.Extension.ToLowerInvariant()
+        if ($ext -notin @('.sln', '.slnx', '.csproj')) {
+          return $false
+        }
+
+        $relative = [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName).Replace('\\', '/')
+        return ($relative -like $globPattern)
+      }
+  )
+
+  if ($candidateFiles.Count -eq 0) {
+    Write-Error "No files matched SolutionPath pattern '$SolutionPath'."
+    exit 1
+  }
+
+  if ($candidateFiles.Count -gt 1) {
+    $matches = $candidateFiles | ForEach-Object {
+      [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName).Replace('\\', '/')
+    }
+    Write-Error "Multiple files matched SolutionPath pattern '$SolutionPath': $($matches -join ', '). Specify an explicit path."
+    exit 1
+  }
+
+  $SolutionPath = $candidateFiles[0].FullName
 }
 
 if (-not (Test-Path $SolutionPath)) {

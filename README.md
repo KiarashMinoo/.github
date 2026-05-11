@@ -35,7 +35,7 @@ This repository centralizes reusable GitHub Actions workflows to avoid duplicati
 **Purpose**: Build, bump beta version, pack, and upload artifacts
 
 **Inputs**:
-- `solution-path` (string, default: `**/*.sln`) — Path to solution or project glob
+- `solution-path` (string, default: `**/*.sln*`) — Path to `.sln`/`.slnx` or project glob
 - `dotnet-versions` (string, default: `8.0.x`, `9.0.x`, `10.0.x`) — .NET SDK versions
 
 **Secrets**:
@@ -57,7 +57,7 @@ This repository centralizes reusable GitHub Actions workflows to avoid duplicati
 **Purpose**: Finalize version, create GitHub Release, pack, and publish to NuGet.org
 
 **Inputs**:
-- `solution-path` (string, default: `**/*.sln`) — Path to solution or project glob
+- `solution-path` (string, default: `**/*.sln*`) — Path to `.sln`/`.slnx` or project glob
 - `dotnet-versions` (string, default: `8.0.x`, `9.0.x`, `10.0.x`) — .NET SDK versions
 
 **Secrets**:

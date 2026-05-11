@@ -11,9 +11,9 @@ on:
           9.0.x
           10.0.x
       solution-path:
-        description: Path to .sln or project glob
+        description: Path to .sln/.slnx or project glob
         type: string
-        default: '**/*.sln'
+        default: '**/*.sln*'
     secrets:
       gh-token:
         description: GitHub token for release notes
@@ -85,7 +85,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln', 'Directory.Build.props') }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln', '**/*.slnx', 'Directory.Build.props') }}
           restore-keys: |
             nuget-${{ runner.os }}-
 
@@ -107,6 +107,7 @@ jobs:
           $params = @{
             Configuration = "${{ matrix.configuration }}"
             Platform = "${{ matrix.platform_in }}"
+            SolutionPath = "${{ inputs.solution-path }}"
             ReleaseNotes = $releaseNotes
           }
           pwsh ./.github/scripts/pack-solution.ps1 @params
