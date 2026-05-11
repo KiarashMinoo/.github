@@ -53,9 +53,9 @@ param(
     
   [string]$SolutionPath,
   [string]$OutputDir = 'artifacts/pkg',
-  [switch]$SkipClean,
-  [switch]$SkipRestore,
-  [switch]$SkipBuild,
+  [switch]$SkipClean = $false,
+  [switch]$SkipRestore = $false,
+  [switch]$SkipBuild = $false,
   [string]$ReleaseNotes = ''
 )
 
