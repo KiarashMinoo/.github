@@ -243,7 +243,7 @@ if (-not $SkipClean) {
 # Restore
 if (-not $SkipRestore) {
   Write-Host "`n--- Restore ---" -ForegroundColor Yellow
-  dotnet restore $SolutionPath --nologo -p:Platform="$platformSol"
+  dotnet restore $SolutionPath --nologo --disable-parallel -p:Platform="$platformSol"
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE 
   }
@@ -254,7 +254,9 @@ if (-not $SkipBuild) {
   Write-Host "`n--- Build ---" -ForegroundColor Yellow
   dotnet build $SolutionPath --nologo `
     -c $Configuration `
+    -m:1 `
     -p:Platform="$platformSol" `
+    -p:BuildInParallel=false `
     -p:ContinuousIntegrationBuild=true `
     --no-restore
   if ($LASTEXITCODE -ne 0) {
