@@ -18,6 +18,9 @@ on:
       gh-token:
         description: GitHub token for release notes
         required: true
+      nuget-api-key:
+        description: NuGet.org API key for publishing
+        required: false
 
 permissions:
   contents: write        # commit & tag
@@ -122,3 +125,61 @@ jobs:
           name: symbols-${{ matrix.configuration }}${{ steps.pack.outputs.artifact_suffix }}
           path: artifacts/pkg/*.snupkg
           if-no-files-found: ignore
+
+# --- 3) publish to GitHub Packages AND NuGet.org simultaneously ---
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for scripts)
+        uses: actions/checkout@v4
+        with: { sparse-checkout: .github/scripts }
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with: { dotnet-version: 8.0.x }
+
+      - name: Download all packages artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          path: ./dist/packages
+          merge-multiple: true
+
+      - name: Download all symbols artifacts (optional)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: symbols-*
+          path: ./dist/symbols
+          merge-multiple: true
+      
+      - name: Publish packages to NuGet.org (Release AnyCPU only)
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ secrets.nuget-api-key }}
+        run: |
+          if (-not $env:NUGET_API_KEY) { 
+            Write-Host 'NUGET_API_KEY secret not set; skipping NuGet.org publish.' 
+            exit 0 
+          }
+          # Only publish Release AnyCPU packages (exclude Debug, ARM64, x86, x64 variants)
+          pwsh ./.github/scripts/publish-packages.ps1 `
+            -NuGetSource 'https://api.nuget.org/v3/index.json' `
+            -NuGetApiKey $env:NUGET_API_KEY `
+            -FilterPattern '^(?!.*\.(Debug|ARM64|x86|x64)).*\.nupkg$'
+
+  # --- 4) cleanup: delete ALL run artifacts after publish job completes ---
+  cleanup:
+    needs: [publish]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Delete ALL run artifacts
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
+            --paginate --jq '.artifacts[].id' | while read -r id; do \
+              gh api repos/${{ github.repository }}/actions/artifacts/$id -X DELETE; \
+            done
