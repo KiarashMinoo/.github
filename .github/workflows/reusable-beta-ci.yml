@@ -23,9 +23,9 @@ on:
         required: false
 
 permissions:
-  contents: write        # commit & tag
-  actions: write         # delete artifacts via gh api
-  packages: write        # publish to GitHub Packages
+  contents: read
+  actions: read
+  packages: read
 
 jobs:
   # --- 1) bump on develop: patch++ & -beta.N, commit with version in message, TAG ---
@@ -37,7 +37,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.gh-token }}
 
       - name: Bump version using helper script (or update .csproj if no Directory.Build.props)
         id: bump
