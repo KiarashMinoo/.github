@@ -124,10 +124,15 @@ jobs:
           GH_TOKEN: ${{ secrets.gh-token }}
         run: |
           $releaseNotes = if ($env:REL_NOTES) { $env:REL_NOTES } else { "" }
+          $solutionPath = "${{ inputs.solution-path }}"
+          if (-not [System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($solutionPath) -and -not (Test-Path $solutionPath)) {
+            Write-Host "Provided solution path '$solutionPath' not found. Falling back to '**/*.sln*'."
+            $solutionPath = '**/*.sln*'
+          }
           $params = @{
             Configuration = "${{ matrix.configuration }}"
             Platform = "${{ matrix.platform_in }}"
-            SolutionPath = "${{ inputs.solution-path }}"
+            SolutionPath = $solutionPath
             ReleaseNotes = $releaseNotes
           }
           pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 @params

@@ -66,6 +66,8 @@ Write-Host "=== .NET Solution Pack Script ===" -ForegroundColor Cyan
 Write-Host "Configuration: $Configuration"
 Write-Host "Platform: $Platform"
 
+$repoRoot = (Get-Location).Path
+
 # Normalize platform for solution builds
 $platformSol = if ($Platform -match '^[Aa]ny[Cc]pu$') { 
   'Any CPU' 
@@ -109,7 +111,6 @@ if (-not $SolutionPath) {
   $SolutionPath = $solutionFiles[0]
 }
 elseif ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($SolutionPath)) {
-  $repoRoot = (Get-Location).Path
   $globPattern = $SolutionPath.Replace('\\', '/')
   $candidateFiles = @(
     Get-ChildItem -Path $repoRoot -Recurse -File |
@@ -130,14 +131,78 @@ elseif ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacte
   }
 
   if ($candidateFiles.Count -gt 1) {
-    $matches = $candidateFiles | ForEach-Object {
+    $matchedPaths = $candidateFiles | ForEach-Object {
       [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName).Replace('\\', '/')
     }
-    Write-Error "Multiple files matched SolutionPath pattern '$SolutionPath': $($matches -join ', '). Specify an explicit path."
+    Write-Error "Multiple files matched SolutionPath pattern '$SolutionPath': $($matchedPaths -join ', '). Specify an explicit path."
     exit 1
   }
 
   $SolutionPath = $candidateFiles[0].FullName
+}
+else {
+  # Resolve non-wildcard paths relative to repo root, and recover from common path mismatches.
+  $requestedPath = $SolutionPath
+  $candidatePath = if ([System.IO.Path]::IsPathRooted($requestedPath)) {
+    $requestedPath
+  }
+  else {
+    Join-Path $repoRoot $requestedPath
+  }
+
+  if (Test-Path -LiteralPath $candidatePath) {
+    $SolutionPath = $candidatePath
+  }
+  else {
+    $requestedLeaf = [System.IO.Path]::GetFileName($requestedPath)
+    $requestedRel = $requestedPath.Replace('\\', '/').TrimStart('./')
+
+    $candidatesByLeaf = @(
+      Get-ChildItem -Path $repoRoot -Recurse -File |
+        Where-Object {
+          $_.Name.Equals($requestedLeaf, [System.StringComparison]::OrdinalIgnoreCase)
+        }
+    )
+
+    $candidatesByRelative = @(
+      $candidatesByLeaf |
+        Where-Object {
+          ([System.IO.Path]::GetRelativePath($repoRoot, $_.FullName).Replace('\\', '/'))
+            .Equals($requestedRel, [System.StringComparison]::OrdinalIgnoreCase)
+        }
+    )
+
+    $finalCandidates = if ($candidatesByRelative.Count -gt 0) { $candidatesByRelative } else { $candidatesByLeaf }
+
+    if ($finalCandidates.Count -eq 0) {
+      $ext = [System.IO.Path]::GetExtension($requestedLeaf)
+      $base = [System.IO.Path]::GetFileNameWithoutExtension($requestedLeaf)
+      $altExt = if ($ext -ieq '.sln') { '.slnx' } elseif ($ext -ieq '.slnx') { '.sln' } else { '' }
+
+      if ($altExt) {
+        $altLeaf = "$base$altExt"
+        $altMatches = @(
+          Get-ChildItem -Path $repoRoot -Recurse -File |
+            Where-Object {
+              $_.Name.Equals($altLeaf, [System.StringComparison]::OrdinalIgnoreCase)
+            }
+        )
+        if ($altMatches.Count -eq 1) {
+          $SolutionPath = $altMatches[0].FullName
+        }
+      }
+    }
+    elseif ($finalCandidates.Count -eq 1) {
+      $SolutionPath = $finalCandidates[0].FullName
+    }
+    else {
+      $paths = $finalCandidates | ForEach-Object {
+        [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName).Replace('\\', '/')
+      }
+      Write-Error "Multiple files matched SolutionPath '$requestedPath': $($paths -join ', '). Specify a more specific path."
+      exit 1
+    }
+  }
 }
 
 if (-not (Test-Path $SolutionPath)) {

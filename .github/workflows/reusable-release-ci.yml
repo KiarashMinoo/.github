@@ -180,10 +180,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.gh-token }}
         run: |
+          $solutionPath = "${{ inputs.solution-path }}"
+          if (-not [System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($solutionPath) -and -not (Test-Path $solutionPath)) {
+            Write-Host "Provided solution path '$solutionPath' not found. Falling back to '**/*.sln*'."
+            $solutionPath = '**/*.sln*'
+          }
           pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 `
             -Configuration "${{ matrix.configuration }}" `
             -Platform "${{ matrix.platform_in }}" `
-            -SolutionPath "${{ inputs.solution-path }}"
+            -SolutionPath "$solutionPath"
 
       - name: Upload packages artifact (unique per leg)
         uses: actions/upload-artifact@v4
