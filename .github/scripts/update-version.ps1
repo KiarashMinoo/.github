@@ -24,7 +24,8 @@ param(
     [switch]$CommitAndTag, 
     [string]$CommitMessage = 'chore: bump version to {VERSION} [skip ci]',
     [string]$TagPrefix = 'v', 
-    [string]$TagMessage = 'Release {TAG}'
+    [string]$TagMessage = 'Release {TAG}',
+    [switch]$UpdateCsproj
 )
 
 # Validate parameters
@@ -65,23 +66,55 @@ function Get-Node($xml, $localName) {
     }
 }
 
-if (-not (Test-Path $PropsPath)) {
-    Write-Error "Props file not found: $PropsPath"
+# Determine if we should use Directory.Build.props or .csproj files
+$usePropsFile = Test-Path $PropsPath
+if (-not $usePropsFile -and -not $UpdateCsproj) {
+    Write-Error "Props file not found: $PropsPath (use -UpdateCsproj to update .csproj files instead)"
     exit 2
 }
 
-[xml]$xml = Get-Content -Raw $PropsPath
-
-$pkgNode = Get-Node $xml 'Version'
-if (-not $pkgNode) {
-    Write-Error "<Version> node not found in $PropsPath"
-    exit 3
+if (-not $usePropsFile -and $UpdateCsproj) {
+    # Find all .csproj files
+    $csprojFiles = @(Get-ChildItem -Recurse -Filter '*.csproj' -ErrorAction SilentlyContinue)
+    if ($csprojFiles.Count -eq 0) {
+        Write-Error "No .csproj files found and $PropsPath not found"
+        exit 2
+    }
+    Write-Host "Found $($csprojFiles.Count) .csproj file(s); will update all"
+}
+else {
+    $csprojFiles = @()
 }
 
-$current = $pkgNode.InnerText.Trim()
-if (-not $current) { 
-    Write-Error '<Version> is empty.'
-    exit 4 
+# Process props file if it exists
+if ($usePropsFile) {
+    [xml]$xml = Get-Content -Raw $PropsPath
+
+    $pkgNode = Get-Node $xml 'Version'
+    if (-not $pkgNode) {
+        Write-Error "<Version> node not found in $PropsPath"
+        exit 3
+    }
+
+    $current = $pkgNode.InnerText.Trim()
+    if (-not $current) { 
+        Write-Error '<Version> is empty.'
+        exit 4 
+    }
+}
+else {
+    # Get current version from first .csproj file
+    [xml]$firstXml = Get-Content -Raw $csprojFiles[0].FullName
+    $pkgNode = Get-Node $firstXml 'Version'
+    if (-not $pkgNode) {
+        Write-Error "<Version> node not found in $($csprojFiles[0].FullName)"
+        exit 3
+    }
+    $current = $pkgNode.InnerText.Trim()
+    if (-not $current) {
+        Write-Error '<Version> is empty.'
+        exit 4
+    }
 }
 
 # Handle SetVersion mode (for syncing branches)
@@ -182,8 +215,26 @@ elseif ($hasChannel -and $Channel -eq 'release') {
 Write-Host ('Current: ' + $current)
 Write-Host ('New:     ' + $newVersion)
 
-$pkgNode.InnerText = $newVersion
-$xml.Save($PropsPath)
+# Update version in files
+if ($usePropsFile) {
+    $pkgNode.InnerText = $newVersion
+    $xml.Save($PropsPath)
+    $updatedFiles = @($PropsPath)
+}
+else {
+    # Update all .csproj files
+    $updatedFiles = @()
+    foreach ($csprojFile in $csprojFiles) {
+        [xml]$csprojXml = Get-Content -Raw $csprojFile.FullName
+        $csprojNode = Get-Node $csprojXml 'Version'
+        if ($csprojNode) {
+            $csprojNode.InnerText = $newVersion
+            $csprojXml.Save($csprojFile.FullName)
+            $updatedFiles += $csprojFile.FullName
+            Write-Host "Updated: $($csprojFile.Name)"
+        }
+    }
+}
 
 if ($env:GITHUB_OUTPUT) {
     Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$newVersion"
@@ -207,8 +258,10 @@ if ($CommitAndTag) {
         Write-Host "No changes to commit." -ForegroundColor Gray
     }
     else {
-        # Stage the props file
-        & git add $PropsPath
+        # Stage updated files
+        foreach ($file in $updatedFiles) {
+            & git add $file
+        }
 
         # Prepare commit message
         $commitMsg = $CommitMessage -replace '\{VERSION\}', $newVersion
