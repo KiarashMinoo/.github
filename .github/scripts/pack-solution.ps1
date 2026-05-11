@@ -112,6 +112,18 @@ if (-not $SolutionPath) {
 }
 elseif ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($SolutionPath)) {
   $globPattern = $SolutionPath.Replace('\\', '/')
+  $globPatterns = @($globPattern)
+  if ($globPattern.StartsWith('**/')) {
+    # Also match files located at repo root for patterns like **/*.sln*
+    $globPatterns += $globPattern.Substring(3)
+  }
+
+  $wildcards = @(
+    $globPatterns |
+      Select-Object -Unique |
+      ForEach-Object { [System.Management.Automation.WildcardPattern]::new($_, [System.Management.Automation.WildcardOptions]::IgnoreCase) }
+  )
+
   $candidateFiles = @(
     Get-ChildItem -Path $repoRoot -Recurse -File |
       Where-Object {
@@ -121,7 +133,12 @@ elseif ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacte
         }
 
         $relative = [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName).Replace('\\', '/')
-        return ($relative -like $globPattern)
+        foreach ($wc in $wildcards) {
+          if ($wc.IsMatch($relative)) {
+            return $true
+          }
+        }
+        return $false
       }
   )
 
