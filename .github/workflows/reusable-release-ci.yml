@@ -14,6 +14,14 @@ on:
         description: Path to .sln/.slnx or project glob
         type: string
         default: '**/*.sln*'
+      nuget-filter-enabled:
+        description: Enable NuGet package filtering during publish
+        type: boolean
+        default: false
+      nuget-filter-pattern:
+        description: Regex pattern used when nuget-filter-enabled is true
+        type: string
+        default: '^(?!.*\.(Debug|ARM64|x86|x64)).*\.nupkg$'
     secrets:
       gh-token:
         description: GitHub token for releases and package publishing
@@ -240,7 +248,7 @@ jobs:
           path: ./dist/symbols
           merge-multiple: true
       
-      - name: Publish packages to NuGet.org (Release AnyCPU only)
+      - name: Publish packages to NuGet.org
         shell: pwsh
         env:
           NUGET_API_KEY: ${{ secrets.nuget-api-key }}
@@ -249,11 +257,16 @@ jobs:
             Write-Host 'NUGET_API_KEY secret not set; skipping NuGet.org publish.' 
             exit 0 
           }
-          # Only publish Release AnyCPU packages (exclude Debug, ARM64, x86, x64 variants)
-          pwsh ./.ci-scripts/.github/scripts/publish-packages.ps1 `
-            -NuGetSource 'https://api.nuget.org/v3/index.json' `
-            -NuGetApiKey $env:NUGET_API_KEY `
-            -FilterPattern '^(?!.*\.(Debug|ARM64|x86|x64)).*\.nupkg$'
+          $args = @(
+            '-NuGetSource', 'https://api.nuget.org/v3/index.json',
+            '-NuGetApiKey', $env:NUGET_API_KEY
+          )
+
+          if ('${{ inputs.nuget-filter-enabled }}' -eq 'true') {
+            $args += @('-FilterPackages', '-FilterPattern', '${{ inputs.nuget-filter-pattern }}')
+          }
+
+          pwsh ./.ci-scripts/.github/scripts/publish-packages.ps1 @args
 
   # --- 4) cleanup: delete ALL run artifacts after publish job completes ---
   cleanup:

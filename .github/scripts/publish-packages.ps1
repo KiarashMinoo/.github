@@ -43,6 +43,9 @@
 .PARAMETER FilterPattern
   Regex pattern to filter which packages to publish (e.g., '.*(?<!Debug|ARM64|x86|x64)\.\d+' for Release AnyCPU only)
 
+.PARAMETER FilterPackages
+    Enable filtering of packages using FilterPattern. If not set, all packages are published.
+
 .EXAMPLE
   pwsh .github/scripts/publish-packages.ps1 -NuGetSource $env:NUGET_SOURCE -NuGetApiKey $env:NUGET_API_KEY
 
@@ -50,7 +53,7 @@
   pwsh .github/scripts/publish-packages.ps1 -NuGetSource $env:NUGET_SOURCE -NuGetApiKey $env:NUGET_API_KEY -MakePublic -GitHubApiToken $env:GITHUB_TOKEN
 
 .EXAMPLE
-  pwsh .github/scripts/publish-packages.ps1 -NuGetSource 'https://api.nuget.org/v3/index.json' -NuGetApiKey $env:NUGET_API_KEY -FilterPattern '.*(?<!Debug|ARM64|x86|x64)\.\d+'
+    pwsh .github/scripts/publish-packages.ps1 -NuGetSource 'https://api.nuget.org/v3/index.json' -NuGetApiKey $env:NUGET_API_KEY -FilterPackages -FilterPattern '^(?!.*\.(Debug|ARM64|x86|x64)).*\.nupkg$'
 #>
 
 param(
@@ -68,6 +71,7 @@ param(
     [switch]$MakePublic,
     [string]$GitHubApiToken = '',
     [string]$GitHubOwner = 'yanis_1984',
+    [switch]$FilterPackages,
     [string]$FilterPattern = ''
 )
 
@@ -91,12 +95,17 @@ if (-not $NuGetSource -or -not $NuGetApiKey) {
 Write-Host "`n--- Publishing Packages (.nupkg) ---" -ForegroundColor Yellow
 $packages = Get-ChildItem -Path $PackagesPath -Filter '*.nupkg' -ErrorAction SilentlyContinue
 
-# Apply filter if specified
-if ($FilterPattern -and $packages) {
+# Apply filter only when explicitly enabled
+if ($FilterPackages -and $packages) {
+    if (-not $FilterPattern) {
+        Write-Warning "FilterPackages was set but FilterPattern is empty. Publishing all packages without filtering."
+    }
+    else {
     $originalCount = $packages.Count
     $packages = $packages | Where-Object { $_.Name -match $FilterPattern }
     Write-Host "Filter applied: $FilterPattern" -ForegroundColor Gray
     Write-Host "  Filtered: $originalCount → $($packages.Count) packages" -ForegroundColor Gray
+    }
 }
 
 if (-not $packages) {
