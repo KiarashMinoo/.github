@@ -308,13 +308,19 @@ New-Item -ItemType File -Path $markerOk -Force | Out-Null
 
 # Summary
 Write-Host "`n=== Pack Complete ===" -ForegroundColor Green
-$packages = Get-ChildItem -Path $OutputDir -Filter '*.nupkg' | Select-Object -ExpandProperty Name
+$packages = @(
+  Get-ChildItem -Path $OutputDir -Filter '*.nupkg' |
+    Select-Object -ExpandProperty Name
+)
 Write-Host "Packages created ($($packages.Count)):"
 foreach ($pkg in $packages) {
   Write-Host "  - $pkg" -ForegroundColor Cyan
 }
 
-$symbols = Get-ChildItem -Path $OutputDir -Filter '*.snupkg' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+$symbols = @(
+  Get-ChildItem -Path $OutputDir -Filter '*.snupkg' -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty Name
+)
 if ($symbols) {
   Write-Host "Symbols created ($($symbols.Count)):"
   foreach ($sym in $symbols) {
