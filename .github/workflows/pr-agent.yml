@@ -7,11 +7,10 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+
   workflow_call:
     secrets:
       OPENAI_KEY:
-        required: true
-      GH_TOKEN:
         required: true
 
 permissions:
@@ -38,20 +37,20 @@ jobs:
           # =====================================================
           OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENAI_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
 
           # =====================================================
           # OpenRouter Endpoint
           # =====================================================
-          OPENAI.API_BASE: https://openrouter.ai/api/v1
+          OPENAI_API_BASE: https://openrouter.ai/api/v1
 
           # =====================================================
-          # Primary Model — fast flash model
+          # Primary Model
           # =====================================================
           CONFIG.MODEL: openrouter/deepseek/deepseek-v4-flash:free
 
           # =====================================================
-          # Fallback Models (fast-to-slow order)
+          # Fallback Models
           # =====================================================
           CONFIG.FALLBACK_MODELS: >
             [
@@ -75,13 +74,9 @@ jobs:
           CONFIG.RESPONSE_LANGUAGE: en-US
           CONFIG.MAX_DESCRIPTION_TOKENS: "800"
           CONFIG.CUSTOM_MODEL_MAX_TOKENS: "32000"
-          CONFIG.TEMPERATURE: "0.05"
-
-          # =====================================================
-          # Token Budget
-          # =====================================================
           CONFIG.MAX_MODEL_TOKENS: "32000"
           CONFIG.MAX_CONTEXT_TOKENS: "60000"
+          CONFIG.TEMPERATURE: "0.05"
 
           # =====================================================
           # PR Review Features
@@ -93,15 +88,16 @@ jobs:
           PR_REVIEWER.ENABLE_REVIEW_LABELS_SECURITY: "true"
 
           # =====================================================
-          # Suggestions — fewer for speed
+          # Inline Suggestions
           # =====================================================
           PR_REVIEWER.INLINE_CODE_COMMENTS: "true"
           PR_REVIEWER.NUM_CODE_SUGGESTIONS: "3"
+
           PR_CODE_SUGGESTIONS.NUM_CODE_SUGGESTIONS: "3"
           PR_CODE_SUGGESTIONS.COMMITABLE_CODE_SUGGESTIONS: "false"
 
           # =====================================================
-          # PR Description / Summary
+          # PR Description
           # =====================================================
           PR_DESCRIPTION.PUBLISH_DESCRIPTION_AS_COMMENT: "true"
           PR_DESCRIPTION.USE_DESCRIPTION_MARKERS: "false"
@@ -110,11 +106,39 @@ jobs:
           # Enterprise .NET Review Rules
           # =====================================================
           PR_REVIEWER.EXTRA_INSTRUCTIONS: |
-            Enterprise C#/.NET review. Flag only actionable issues with root cause and fix.
+            Enterprise C#/.NET review.
 
-            Check: async/await correctness, ConfigureAwait, cancellation propagation, deadlocks,
-            race conditions, boxing, excessive LINQ allocations, N+1 queries, missing AsNoTracking,
-            EF transaction consistency, DI lifetime mismatches, clean-arch boundary leaks,
-            null safety, missing validation, secrets exposure, auth gaps, structured logging quality.
+            Flag only actionable issues with:
+            - root cause
+            - impact
+            - concrete fix suggestion
 
-            Skip style nitpicks. No generic advice.
+            Prioritize:
+            - bugs
+            - race conditions
+            - thread safety
+            - deadlocks
+            - async/await correctness
+            - cancellation token propagation
+            - ConfigureAwait misuse
+            - memory allocations
+            - boxing/unboxing
+            - excessive LINQ allocations
+            - multiple enumeration
+            - EF Core N+1 queries
+            - missing AsNoTracking
+            - transaction consistency
+            - DI lifetime mismatches
+            - null safety
+            - validation gaps
+            - security vulnerabilities
+            - secrets exposure
+            - auth/authz gaps
+            - clean architecture violations
+            - CQRS boundary leaks
+            - structured logging quality
+
+            Avoid:
+            - style nitpicks
+            - generic recommendations
+            - low-value comments
