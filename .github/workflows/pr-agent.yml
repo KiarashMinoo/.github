@@ -7,6 +7,12 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+  workflow_call:
+    secrets:
+      OPENAI_KEY:
+        required: true
+      GH_TOKEN:
+        required: true
 
 permissions:
   contents: read
