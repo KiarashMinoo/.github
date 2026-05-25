@@ -1,0 +1,114 @@
+name: PR-Agent AI Code Review
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: PR Agent Review
+        uses: qodo-ai/pr-agent@main
+
+        env:
+          # =====================================================
+          # Authentication
+          # =====================================================
+          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENAI_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+          # =====================================================
+          # OpenRouter Endpoint
+          # =====================================================
+          OPENAI.API_BASE: https://openrouter.ai/api/v1
+
+          # =====================================================
+          # Primary Model — fast flash model
+          # =====================================================
+          CONFIG.MODEL: openrouter/deepseek/deepseek-v4-flash:free
+
+          # =====================================================
+          # Fallback Models (fast-to-slow order)
+          # =====================================================
+          CONFIG.FALLBACK_MODELS: >
+            [
+              "openrouter/openai/gpt-oss-20b:free",
+              "openrouter/google/gemma-4-26b-a4b-it:free",
+              "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+              "openrouter/openai/gpt-oss-120b:free"
+            ]
+
+          # =====================================================
+          # LiteLLM Reliability
+          # =====================================================
+          LITELLM.DROP_PARAMS: "true"
+          LITELLM.RETRY: "2"
+          LITELLM.RETRY_WAIT: "3"
+          LITELLM.TIMEOUT: "90"
+
+          # =====================================================
+          # General Configuration
+          # =====================================================
+          CONFIG.RESPONSE_LANGUAGE: en-US
+          CONFIG.MAX_DESCRIPTION_TOKENS: "800"
+          CONFIG.CUSTOM_MODEL_MAX_TOKENS: "32000"
+          CONFIG.TEMPERATURE: "0.05"
+
+          # =====================================================
+          # Token Budget
+          # =====================================================
+          CONFIG.MAX_MODEL_TOKENS: "32000"
+          CONFIG.MAX_CONTEXT_TOKENS: "60000"
+
+          # =====================================================
+          # PR Review Features
+          # =====================================================
+          PR_REVIEWER.REQUIRE_SCORE_REVIEW: "true"
+          PR_REVIEWER.REQUIRE_TESTS_REVIEW: "true"
+          PR_REVIEWER.REQUIRE_SECURITY_REVIEW: "true"
+          PR_REVIEWER.REQUIRE_ESTIMATE_EFFORT_TO_REVIEW: "true"
+          PR_REVIEWER.ENABLE_REVIEW_LABELS_SECURITY: "true"
+
+          # =====================================================
+          # Suggestions — fewer for speed
+          # =====================================================
+          PR_REVIEWER.INLINE_CODE_COMMENTS: "true"
+          PR_REVIEWER.NUM_CODE_SUGGESTIONS: "3"
+          PR_CODE_SUGGESTIONS.NUM_CODE_SUGGESTIONS: "3"
+          PR_CODE_SUGGESTIONS.COMMITABLE_CODE_SUGGESTIONS: "false"
+
+          # =====================================================
+          # PR Description / Summary
+          # =====================================================
+          PR_DESCRIPTION.PUBLISH_DESCRIPTION_AS_COMMENT: "true"
+          PR_DESCRIPTION.USE_DESCRIPTION_MARKERS: "false"
+
+          # =====================================================
+          # Enterprise .NET Review Rules
+          # =====================================================
+          PR_REVIEWER.EXTRA_INSTRUCTIONS: |
+            Enterprise C#/.NET review. Flag only actionable issues with root cause and fix.
+
+            Check: async/await correctness, ConfigureAwait, cancellation propagation, deadlocks,
+            race conditions, boxing, excessive LINQ allocations, N+1 queries, missing AsNoTracking,
+            EF transaction consistency, DI lifetime mismatches, clean-arch boundary leaks,
+            null safety, missing validation, secrets exposure, auth gaps, structured logging quality.
+
+            Skip style nitpicks. No generic advice.
