@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: PR Agent Review
-        uses: qodo-ai/pr-agent@v0.35
+        uses: qodo-ai/pr-agent@v0.35.0
 
         env:
           # =====================================================
