@@ -22,6 +22,18 @@ on:
         description: Regex pattern used when nuget-filter-enabled is true
         type: string
         default: '^(?!.*\.(Debug|ARM64|x86|x64)).*\.nupkg$'
+      platforms:
+        description: JSON array of platforms to build (e.g. '["AnyCpu","x64"]')
+        type: string
+        default: '["AnyCpu", "x86", "x64", "ARM64"]'
+      configurations:
+        description: JSON array of build configurations (e.g. '["Release"]')
+        type: string
+        default: '["Debug", "Release"]'
+      runner-os:
+        description: JSON array of runner OS labels (e.g. '["ubuntu-latest"]')
+        type: string
+        default: '["ubuntu-latest"]'
     secrets:
       gh-token:
         description: GitHub token for releases and package publishing
@@ -142,9 +154,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest ]
-        platform_in: [ AnyCpu, x86, x64, ARM64 ]
-        configuration: [ Debug, Release ]
+        os: ${{ fromJson(inputs.runner-os) }}
+        platform_in: ${{ fromJson(inputs.platforms) }}
+        configuration: ${{ fromJson(inputs.configurations) }}
     steps:
       - name: Checkout finalized tag
         uses: actions/checkout@v4
@@ -169,10 +181,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: |
-            8.0.x
-            9.0.x
-            10.0.x
+          dotnet-version: ${{ inputs.dotnet-versions }}
 
       - name: Cache NuGet
         uses: actions/cache@v4
