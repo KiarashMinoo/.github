@@ -13,7 +13,7 @@
   Used by GitHub Actions pack jobs.
 
 .PARAMETER Configuration
-  Build configuration (Debug or Release)
+  Build configuration (e.g. Debug, Release, or any custom MSBuild configuration)
 
 .PARAMETER Platform
   Platform target (AnyCpu, x86, x64, ARM64)
@@ -44,7 +44,6 @@
 
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('Debug', 'Release')]
   [string]$Configuration,
     
   [Parameter(Mandatory = $true)]
