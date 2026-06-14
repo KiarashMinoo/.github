@@ -113,7 +113,14 @@ jobs:
           restore-keys: |
             nuget-${{ runner.os }}-
 
+      - name: Autobuild (C# — implicit usings enabled)
+        if: ${{ matrix.language == 'csharp' }}
+        uses: github/codeql-action/autobuild@v4
+        with:
+          build-command: dotnet build /p:ImplicitUsings=enable
+
       - name: Autobuild
+        if: ${{ matrix.language != 'csharp' }}
         uses: github/codeql-action/autobuild@v4
 
       - name: Perform CodeQL Analysis
