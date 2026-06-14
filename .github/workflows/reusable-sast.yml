@@ -13,6 +13,7 @@ on:
         default: |
           8.0.x
           9.0.x
+          10.0.x
       solution-path:
         description: Path to .sln/.slnx or project glob
         type: string
