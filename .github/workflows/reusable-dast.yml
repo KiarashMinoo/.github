@@ -58,12 +58,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # ---- Passive baseline (safe for production-like environments) ----
       - name: ZAP Baseline Scan
         if: ${{ inputs.scan-type == 'baseline' }}
-        uses: zaproxy/action-baseline@v0.14.0
+        uses: zaproxy/action-baseline@v0.15.0
         with:
           token: ${{ secrets.gh-token }}
           target: ${{ inputs.target-url }}
@@ -75,7 +75,7 @@ jobs:
       # ---- Active full scan (non-production only) ----------------------
       - name: ZAP Full Scan
         if: ${{ inputs.scan-type == 'full' }}
-        uses: zaproxy/action-full-scan@v0.12.0
+        uses: zaproxy/action-full-scan@v0.13.0
         with:
           token: ${{ secrets.gh-token }}
           target: ${{ inputs.target-url }}
@@ -87,7 +87,7 @@ jobs:
       # ---- API scan driven by OpenAPI/Swagger/GraphQL spec -------------
       - name: ZAP API Scan
         if: ${{ inputs.scan-type == 'api' }}
-        uses: zaproxy/action-api-scan@v0.9.0
+        uses: zaproxy/action-api-scan@v0.10.0
         with:
           token: ${{ secrets.gh-token }}
           target: ${{ inputs.openapi-url != '' && inputs.openapi-url || format('{0}/openapi.json', inputs.target-url) }}
@@ -99,7 +99,7 @@ jobs:
       # ---- Upload SARIF to GitHub Security tab (all scan types) -------
       - name: Upload ZAP SARIF to GitHub Security
         if: always() && hashFiles('results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
           category: zap-dast-${{ inputs.scan-type }}

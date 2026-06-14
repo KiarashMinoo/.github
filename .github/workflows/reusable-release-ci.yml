@@ -56,13 +56,13 @@ jobs:
       version: ${{ steps.ver.outputs.version }}      
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.gh-token }}
 
       - name: Checkout workflow scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: KiarashMinoo/.github
           ref: main
@@ -92,7 +92,7 @@ jobs:
           }
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.ver.outputs.version }}
           name: v${{ steps.ver.outputs.version }}
@@ -106,14 +106,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout develop
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: develop
           token: ${{ secrets.gh-token }}
 
       - name: Checkout workflow scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: KiarashMinoo/.github
           ref: main
@@ -159,13 +159,13 @@ jobs:
         configuration: ${{ fromJson(inputs.configurations) }}
     steps:
       - name: Checkout finalized tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: refs/tags/v${{ needs.finalize-and-tag.outputs.version }}
 
       - name: Checkout workflow scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: KiarashMinoo/.github
           ref: main
@@ -179,12 +179,12 @@ jobs:
           pwsh ./.ci-scripts/.github/scripts/show-version.ps1
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: ${{ inputs.dotnet-versions }}
 
       - name: Cache NuGet
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln', '**/*.slnx', 'Directory.Build.props') }}
@@ -208,7 +208,7 @@ jobs:
             -SolutionPath "$solutionPath"
 
       - name: Upload packages artifact (unique per leg)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pkg-${{ matrix.configuration }}${{ steps.pack.outputs.artifact_suffix }}
           path: artifacts/pkg/*.nupkg
@@ -216,7 +216,7 @@ jobs:
 
       - name: Upload symbols (optional, unique per leg)
         if: ${{ hashFiles('artifacts/pkg/*.snupkg') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: symbols-${{ matrix.configuration }}${{ steps.pack.outputs.artifact_suffix }}
           path: artifacts/pkg/*.snupkg
@@ -228,9 +228,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout caller repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Checkout workflow scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: KiarashMinoo/.github
           ref: main
@@ -239,11 +239,11 @@ jobs:
           token: ${{ secrets.gh-token }}
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with: { dotnet-version: 8.0.x }
 
       - name: Download all packages artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: pkg-*
           path: ./dist/packages
@@ -251,7 +251,7 @@ jobs:
 
       - name: Download all symbols artifacts (optional)
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: symbols-*
           path: ./dist/symbols

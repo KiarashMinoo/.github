@@ -60,15 +60,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: ${{ inputs.dotnet-versions }}
 
       - name: Cache NuGet
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln', '**/*.slnx', 'Directory.Build.props') }}
@@ -117,7 +117,7 @@ jobs:
 
       - name: Upload package audit reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dotnet-package-audit
           path: |
@@ -134,7 +134,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run OWASP Dependency-Check
         uses: dependency-check/Dependency-Check_Action@main
@@ -152,7 +152,7 @@ jobs:
 
       - name: Upload OWASP DC report artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: owasp-dependency-check-report
           path: owasp-dc-report/
@@ -160,7 +160,7 @@ jobs:
 
       - name: Upload OWASP DC SARIF to GitHub Security
         if: always() && hashFiles('owasp-dc-report/dependency-check-report.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: owasp-dc-report/dependency-check-report.sarif
           category: owasp-dependency-check
@@ -180,7 +180,7 @@ jobs:
 
     steps:
       - name: Create or update vulnerability issue
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           VULNERABLE_FOUND: ${{ needs.dotnet-audit.outputs.vulnerable-found }}
           OWASP_RESULT: ${{ needs.owasp-dependency-check.result }}

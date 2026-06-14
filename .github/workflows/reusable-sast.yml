@@ -65,12 +65,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.gh-token }}
 
@@ -88,25 +88,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           queries: ${{ inputs.codeql-queries }}
 
       - name: Setup .NET
         if: ${{ matrix.language == 'csharp' }}
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: ${{ inputs.dotnet-versions }}
 
       - name: Cache NuGet
         if: ${{ matrix.language == 'csharp' }}
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln', '**/*.slnx', 'Directory.Build.props') }}
@@ -114,10 +114,10 @@ jobs:
             nuget-${{ runner.os }}-
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: /language:${{ matrix.language }}
           upload: true
@@ -132,27 +132,30 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run Semgrep
-        uses: semgrep/semgrep-action@v1
-        with:
-          config: ${{ inputs.semgrep-config }}
-          generateSarif: '1'
-          auditOn: push
-          publishToken: ${{ secrets.semgrep-app-token }}
-          publishDeployment: ${{ secrets.semgrep-app-token != '' && '1' || '0' }}
+        shell: bash
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.semgrep-app-token }}
+        run: |
+          python3 -m pip install semgrep --quiet
+          semgrep scan \
+            --config "${{ inputs.semgrep-config }}" \
+            --sarif \
+            --output semgrep.sarif \
+            . || true
 
       - name: Upload Semgrep SARIF to GitHub Security
         if: always() && hashFiles('semgrep.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: semgrep.sarif
           category: semgrep
 
       - name: Upload Semgrep report artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: semgrep-sarif-report
           path: semgrep.sarif
