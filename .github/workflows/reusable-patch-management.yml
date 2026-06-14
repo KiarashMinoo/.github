@@ -46,6 +46,7 @@ permissions:
   contents: read
   issues: write
   security-events: write
+  actions: read
 
 jobs:
   # ------------------------------------------------------------------
@@ -131,6 +132,8 @@ jobs:
   owasp-dependency-check:
     name: OWASP Dependency-Check
     runs-on: ubuntu-latest
+    outputs:
+      cves-found: ${{ steps.owasp-findings.outputs.cves_found }}
 
     steps:
       - name: Checkout
@@ -158,12 +161,38 @@ jobs:
           path: owasp-dc-report/
           if-no-files-found: warn
 
-      - name: Upload OWASP DC SARIF to GitHub Security
+      - name: Check Code Scanning availability
+        id: ghas
         if: always() && hashFiles('owasp-dc-report/dependency-check-report.sarif') != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          http=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts?per_page=1")
+          [[ "$http" == "200" ]] && echo "enabled=true" >> "$GITHUB_OUTPUT" || echo "enabled=false" >> "$GITHUB_OUTPUT"
+
+      - name: Upload OWASP DC SARIF to GitHub Security
+        if: always() && steps.ghas.outputs.enabled == 'true' && hashFiles('owasp-dc-report/dependency-check-report.sarif') != ''
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: owasp-dc-report/dependency-check-report.sarif
           category: owasp-dependency-check
+
+      - name: Check OWASP findings count
+        id: owasp-findings
+        if: always() && hashFiles('owasp-dc-report/dependency-check-report.sarif') != ''
+        shell: bash
+        run: |
+          count=$(python3 -c "
+          import json
+          with open('owasp-dc-report/dependency-check-report.sarif') as f:
+              sarif = json.load(f)
+          print(len(sarif.get('runs', [{}])[0].get('results', [])))
+          " 2>/dev/null || echo "0")
+          echo "cves_found=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
   # ------------------------------------------------------------------
   # 3) Create or update a GitHub issue when vulnerabilities are found
@@ -175,7 +204,7 @@ jobs:
       always() &&
       inputs.create-issue == true &&
       (needs.dotnet-audit.outputs.vulnerable-found == 'true' ||
-       needs.owasp-dependency-check.result == 'failure')
+       needs.owasp-dependency-check.outputs.cves-found == 'true')
     runs-on: ubuntu-latest
 
     steps:

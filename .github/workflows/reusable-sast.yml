@@ -113,21 +113,53 @@ jobs:
           restore-keys: |
             nuget-${{ runner.os }}-
 
-      - name: Autobuild (C# — implicit usings enabled)
+      - name: Build C# for CodeQL
         if: ${{ matrix.language == 'csharp' }}
-        uses: github/codeql-action/autobuild@v4
-        with:
-          build-command: dotnet build /p:ImplicitUsings=enable
+        shell: bash
+        run: |
+          # Inject standard global usings into every project so files that omit
+          # explicit using directives (or rely on ImplicitUsings) always compile.
+          find . \( -name "*.csproj" -o -name "*.vbproj" \) \
+               -not -path "*/obj/*" -not -path "*/bin/*" | \
+          while IFS= read -r proj; do
+            cat > "$(dirname "$proj")/GlobalUsings.CodeQL.cs" <<'EOF'
+          global using System;
+          global using System.Collections.Generic;
+          global using System.IO;
+          global using System.Linq;
+          global using System.Net.Http;
+          global using System.Threading;
+          global using System.Threading.Tasks;
+          EOF
+          done
+          # Locate the solution file; fall back to current directory if none found
+          sln=$(find . \( -name "*.sln" -o -name "*.slnx" \) \
+                    -not -path "*/obj/*" -not -path "*/bin/*" | head -1)
+          dotnet build ${sln:-.} \
+            --configuration Release \
+            /p:TreatWarningsAsErrors=false
 
       - name: Autobuild
         if: ${{ matrix.language != 'csharp' }}
         uses: github/codeql-action/autobuild@v4
 
+      - name: Check Code Scanning availability
+        id: ghas
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          http=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts?per_page=1")
+          [[ "$http" == "200" ]] && echo "enabled=true" >> "$GITHUB_OUTPUT" || echo "enabled=false" >> "$GITHUB_OUTPUT"
+
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
           category: /language:${{ matrix.language }}
-          upload: true
+          upload: ${{ steps.ghas.outputs.enabled == 'true' }}
 
   # ------------------------------------------------------------------
   # 3) Semgrep — pattern-based SAST with OWASP and custom rule packs
@@ -153,8 +185,21 @@ jobs:
             --output semgrep.sarif \
             . || true
 
-      - name: Upload Semgrep SARIF to GitHub Security
+      - name: Check Code Scanning availability
+        id: ghas
         if: always() && hashFiles('semgrep.sarif') != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          http=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts?per_page=1")
+          [[ "$http" == "200" ]] && echo "enabled=true" >> "$GITHUB_OUTPUT" || echo "enabled=false" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Semgrep SARIF to GitHub Security
+        if: always() && steps.ghas.outputs.enabled == 'true' && hashFiles('semgrep.sarif') != ''
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: semgrep.sarif
