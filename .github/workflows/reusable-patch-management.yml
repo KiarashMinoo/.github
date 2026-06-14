@@ -1,0 +1,240 @@
+name: Reusable — Patch Management (Dependency Vulnerability & Update Audit)
+
+on:
+  workflow_call:
+    inputs:
+      dotnet-versions:
+        description: .NET SDK versions to install
+        type: string
+        default: |
+          8.0.x
+          9.0.x
+      solution-path:
+        description: Path to .sln/.slnx or project glob
+        type: string
+        default: '**/*.sln*'
+      fail-on-vulnerable:
+        description: Fail the workflow when packages with known CVEs are found
+        type: boolean
+        default: true
+      fail-on-outdated:
+        description: Fail the workflow when packages with available updates are found
+        type: boolean
+        default: false
+      create-issue:
+        description: Open (or update) a GitHub issue when vulnerabilities are detected
+        type: boolean
+        default: true
+      owasp-dc-version:
+        description: OWASP Dependency-Check release to use
+        type: string
+        default: '12.1.1'
+      owasp-fail-cvss:
+        description: CVSS score threshold at which OWASP Dependency-Check fails the build (0–10)
+        type: number
+        default: 7
+    secrets:
+      gh-token:
+        description: GitHub token for creating/updating issues and uploading SARIF
+        required: true
+      nvd-api-key:
+        description: NVD API key for faster CVE database downloads (optional but recommended)
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+  security-events: write
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1) .NET built-in package audit — fast, no extra tooling required
+  # ------------------------------------------------------------------
+  dotnet-audit:
+    name: .NET Package Vulnerability Audit
+    runs-on: ubuntu-latest
+    outputs:
+      vulnerable-found: ${{ steps.audit.outputs.vulnerable_found }}
+      outdated-found: ${{ steps.outdated.outputs.outdated_found }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet-versions }}
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln', '**/*.slnx', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore NuGet packages
+        shell: pwsh
+        run: |
+          $slnFiles = Get-ChildItem -Recurse -Include "*.sln","*.slnx" |
+            Where-Object { $_.FullName -notmatch 'node_modules|\.git|\.ci-scripts' }
+          if ($slnFiles.Count -gt 0) {
+            foreach ($sln in $slnFiles) {
+              Write-Host "Restoring: $($sln.FullName)"
+              dotnet restore $sln.FullName
+            }
+          } else {
+            dotnet restore
+          }
+
+      - name: Audit for known CVEs (dotnet list package --vulnerable)
+        id: audit
+        shell: pwsh
+        run: |
+          $result = dotnet list package --vulnerable --include-transitive 2>&1
+          $result | Tee-Object -FilePath vulnerable-packages.txt
+          $found = ($result | Select-String "has the following vulnerable packages").Count -gt 0
+          "vulnerable_found=$($found.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if ($found -and '${{ inputs.fail-on-vulnerable }}' -eq 'true') {
+            Write-Error "Vulnerable NuGet packages detected — review vulnerable-packages.txt"
+            exit 1
+          }
+
+      - name: Check for available updates (dotnet list package --outdated)
+        id: outdated
+        shell: pwsh
+        run: |
+          $result = dotnet list package --outdated 2>&1
+          $result | Tee-Object -FilePath outdated-packages.txt
+          $found = ($result | Select-String "has the following updates available").Count -gt 0
+          "outdated_found=$($found.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if ($found -and '${{ inputs.fail-on-outdated }}' -eq 'true') {
+            Write-Error "Outdated NuGet packages found — review outdated-packages.txt"
+            exit 1
+          }
+
+      - name: Upload package audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-package-audit
+          path: |
+            vulnerable-packages.txt
+            outdated-packages.txt
+          if-no-files-found: ignore
+
+  # ------------------------------------------------------------------
+  # 2) OWASP Dependency-Check — deep CVE scan with NVD database
+  # ------------------------------------------------------------------
+  owasp-dependency-check:
+    name: OWASP Dependency-Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run OWASP Dependency-Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: ${{ github.repository }}
+          path: '.'
+          format: 'ALL'
+          out: 'owasp-dc-report'
+          args: >
+            --enableRetired
+            --enableExperimental
+            --failOnCVSS ${{ inputs.owasp-fail-cvss }}
+        env:
+          NVD_API_KEY: ${{ secrets.nvd-api-key }}
+
+      - name: Upload OWASP DC report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: owasp-dependency-check-report
+          path: owasp-dc-report/
+          if-no-files-found: warn
+
+      - name: Upload OWASP DC SARIF to GitHub Security
+        if: always() && hashFiles('owasp-dc-report/dependency-check-report.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: owasp-dc-report/dependency-check-report.sarif
+          category: owasp-dependency-check
+
+  # ------------------------------------------------------------------
+  # 3) Create or update a GitHub issue when vulnerabilities are found
+  # ------------------------------------------------------------------
+  create-vulnerability-issue:
+    name: Report Vulnerabilities via GitHub Issue
+    needs: [dotnet-audit, owasp-dependency-check]
+    if: |
+      always() &&
+      inputs.create-issue == true &&
+      (needs.dotnet-audit.outputs.vulnerable-found == 'true' ||
+       needs.owasp-dependency-check.result == 'failure')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create or update vulnerability issue
+        uses: actions/github-script@v7
+        env:
+          VULNERABLE_FOUND: ${{ needs.dotnet-audit.outputs.vulnerable-found }}
+          OWASP_RESULT: ${{ needs.owasp-dependency-check.result }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ secrets.gh-token }}
+          script: |
+            const today = new Date().toISOString().split('T')[0];
+            const title = `\u{1F512} Security: Vulnerable dependencies found (${today})`;
+            const body = [
+              '## Dependency Vulnerability Report',
+              '',
+              `**Repository:** \`${context.repo.owner}/${context.repo.repo}\``,
+              `**Branch:** \`${context.ref}\``,
+              `**Workflow run:** ${process.env.RUN_URL}`,
+              `**Date:** ${new Date().toISOString()}`,
+              '',
+              '### Scan Results',
+              '| Scanner | Result |',
+              '|---------|--------|',
+              `| \`.NET dotnet list --vulnerable\` | ${process.env.VULNERABLE_FOUND === 'true' ? '❌ Vulnerable packages found' : '✅ Clean'} |`,
+              `| OWASP Dependency-Check | ${process.env.OWASP_RESULT === 'failure' ? '❌ CVEs detected above threshold' : process.env.OWASP_RESULT} |`,
+              '',
+              '### Required Actions',
+              '1. Download the [workflow run artifacts](' + process.env.RUN_URL + ') for detailed reports.',
+              '2. Update all packages flagged in `vulnerable-packages.txt` to their patched versions.',
+              '3. Re-run this workflow to confirm all CVEs are resolved before closing this issue.',
+              '',
+              '> *This issue is automatically created and updated by the patch management workflow.*',
+            ].join('\n');
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: ['security', 'dependencies'],
+            });
+
+            const existing = issues.find(i => i.title.includes('Vulnerable dependencies found'));
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+                title,
+              });
+              core.info(`Updated existing issue #${existing.number}`);
+            } else {
+              const { data: created } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['security', 'dependencies'],
+              });
+              core.info(`Created issue #${created.number}`);
+            }

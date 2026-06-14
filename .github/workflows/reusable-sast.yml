@@ -1,0 +1,158 @@
+name: Reusable — SAST (Static Analysis Security Testing)
+
+on:
+  workflow_call:
+    inputs:
+      languages:
+        description: JSON array of CodeQL languages (e.g. '["csharp","javascript"]')
+        type: string
+        default: '["csharp"]'
+      dotnet-versions:
+        description: .NET SDK versions to install (required when csharp is in languages)
+        type: string
+        default: |
+          8.0.x
+          9.0.x
+      solution-path:
+        description: Path to .sln/.slnx or project glob
+        type: string
+        default: '**/*.sln*'
+      enable-codeql:
+        description: Run CodeQL analysis (requires GitHub Advanced Security on private repos)
+        type: boolean
+        default: true
+      enable-semgrep:
+        description: Run Semgrep SAST analysis
+        type: boolean
+        default: true
+      enable-gitleaks:
+        description: Run Gitleaks secret scanning
+        type: boolean
+        default: true
+      semgrep-config:
+        description: Semgrep ruleset — auto, p/default, p/csharp, p/owasp-top-ten, or a file path
+        type: string
+        default: 'p/default'
+      codeql-queries:
+        description: CodeQL query suite — security-extended or security-and-quality
+        type: string
+        default: 'security-extended,security-and-quality'
+      fail-on-findings:
+        description: Fail the workflow if any security findings are detected
+        type: boolean
+        default: false
+    secrets:
+      gh-token:
+        description: GitHub token with security-events:write for SARIF uploads
+        required: true
+      semgrep-app-token:
+        description: Semgrep App token (optional, enables Semgrep Cloud dashboard)
+        required: false
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1) Secret scanning — detect hardcoded credentials and API keys
+  # ------------------------------------------------------------------
+  gitleaks:
+    if: ${{ inputs.enable-gitleaks }}
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.gh-token }}
+
+  # ------------------------------------------------------------------
+  # 2) CodeQL — multi-language semantic SAST via GitHub Security
+  # ------------------------------------------------------------------
+  codeql:
+    if: ${{ inputs.enable-codeql }}
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJson(inputs.languages) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: ${{ inputs.codeql-queries }}
+
+      - name: Setup .NET
+        if: ${{ matrix.language == 'csharp' }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet-versions }}
+
+      - name: Cache NuGet
+        if: ${{ matrix.language == 'csharp' }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln', '**/*.slnx', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
+          upload: true
+
+  # ------------------------------------------------------------------
+  # 3) Semgrep — pattern-based SAST with OWASP and custom rule packs
+  # ------------------------------------------------------------------
+  semgrep:
+    if: ${{ inputs.enable-semgrep }}
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: ${{ inputs.semgrep-config }}
+          generateSarif: '1'
+          auditOn: push
+          publishToken: ${{ secrets.semgrep-app-token }}
+          publishDeployment: ${{ secrets.semgrep-app-token != '' && '1' || '0' }}
+
+      - name: Upload Semgrep SARIF to GitHub Security
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Upload Semgrep report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-sarif-report
+          path: semgrep.sarif
+          if-no-files-found: ignore

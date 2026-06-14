@@ -1,0 +1,105 @@
+name: Reusable — DAST (Dynamic Analysis Security Testing)
+
+# Scans a RUNNING application — the caller must ensure the target URL
+# is reachable before invoking this workflow (e.g. deploy to staging first).
+
+on:
+  workflow_call:
+    inputs:
+      target-url:
+        description: Full URL of the running application to scan (must be reachable from runners)
+        type: string
+        required: true
+      scan-type:
+        description: |
+          ZAP scan mode:
+            baseline — passive only, safe for production (no active attack)
+            full      — active attack simulation, use only on non-production
+            api       — OpenAPI/GraphQL/SOAP specification-driven scan
+        type: string
+        default: baseline
+      openapi-url:
+        description: OpenAPI/Swagger/GraphQL spec URL (required when scan-type is api)
+        type: string
+        default: ''
+      fail-on-alerts:
+        description: Exit non-zero and block the caller workflow if ZAP finds any alerts
+        type: boolean
+        default: false
+      rules-file-name:
+        description: Path to a ZAP rules config file (.tsv) for suppressing known false-positives
+        type: string
+        default: ''
+      zap-cmd-options:
+        description: Additional ZAP command-line flags (e.g. '-T 60' to cap run time in minutes)
+        type: string
+        default: ''
+      artifact-retention-days:
+        description: Days to retain the HTML/JSON/SARIF report artifacts
+        type: number
+        default: 30
+    secrets:
+      gh-token:
+        description: GitHub token — used by ZAP actions to create/update issues and upload SARIF
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+  security-events: write
+
+jobs:
+  # ------------------------------------------------------------------
+  # ZAP scan — three modes, exactly one runs based on scan-type input
+  # ------------------------------------------------------------------
+  zap-scan:
+    name: OWASP ZAP — ${{ inputs.scan-type }} scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- Passive baseline (safe for production-like environments) ----
+      - name: ZAP Baseline Scan
+        if: ${{ inputs.scan-type == 'baseline' }}
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          token: ${{ secrets.gh-token }}
+          target: ${{ inputs.target-url }}
+          rules_file_name: ${{ inputs.rules-file-name }}
+          cmd_options: ${{ inputs.zap-cmd-options }}
+          fail_action: ${{ inputs.fail-on-alerts }}
+          artifact_name: zap-baseline-report
+
+      # ---- Active full scan (non-production only) ----------------------
+      - name: ZAP Full Scan
+        if: ${{ inputs.scan-type == 'full' }}
+        uses: zaproxy/action-full-scan@v0.12.0
+        with:
+          token: ${{ secrets.gh-token }}
+          target: ${{ inputs.target-url }}
+          rules_file_name: ${{ inputs.rules-file-name }}
+          cmd_options: ${{ inputs.zap-cmd-options }}
+          fail_action: ${{ inputs.fail-on-alerts }}
+          artifact_name: zap-full-report
+
+      # ---- API scan driven by OpenAPI/Swagger/GraphQL spec -------------
+      - name: ZAP API Scan
+        if: ${{ inputs.scan-type == 'api' }}
+        uses: zaproxy/action-api-scan@v0.9.0
+        with:
+          token: ${{ secrets.gh-token }}
+          target: ${{ inputs.openapi-url != '' && inputs.openapi-url || format('{0}/openapi.json', inputs.target-url) }}
+          rules_file_name: ${{ inputs.rules-file-name }}
+          cmd_options: ${{ inputs.zap-cmd-options }}
+          fail_action: ${{ inputs.fail-on-alerts }}
+          artifact_name: zap-api-report
+
+      # ---- Upload SARIF to GitHub Security tab (all scan types) -------
+      - name: Upload ZAP SARIF to GitHub Security
+        if: always() && hashFiles('results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: zap-dast-${{ inputs.scan-type }}
