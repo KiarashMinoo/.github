@@ -38,6 +38,13 @@ on:
         description: CodeQL query suite — security-extended or security-and-quality
         type: string
         default: 'security-extended'
+      codeql-build-mode:
+        description: >
+          CodeQL build mode — none (fastest, no compilation), autobuild (CodeQL-managed),
+          or manual (custom dotnet build, most precise). Use manual only if none misses
+          findings in your specific codebase.
+        type: string
+        default: 'none'
       fail-on-findings:
         description: Fail the workflow if any security findings are detected
         type: boolean
@@ -96,15 +103,27 @@ jobs:
           languages: ${{ matrix.language }}
           queries: ${{ inputs.codeql-queries }}
           tools: latest
+          build-mode: ${{ inputs.codeql-build-mode }}
+          config: |
+            paths-ignore:
+              - '**/Tests/**'
+              - '**/test/**'
+              - '**/*.Tests/**'
+              - '**/*.Test/**'
+              - '**/Migrations/**'
+              - '**/obj/**'
+              - '**/bin/**'
+              - '**/*.g.cs'
+              - '**/*.generated.cs'
 
       - name: Setup .NET
-        if: ${{ matrix.language == 'csharp' }}
+        if: ${{ matrix.language == 'csharp' && inputs.codeql-build-mode == 'manual' }}
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: ${{ inputs.dotnet-versions }}
 
       - name: Cache NuGet
-        if: ${{ matrix.language == 'csharp' }}
+        if: ${{ matrix.language == 'csharp' && inputs.codeql-build-mode == 'manual' }}
         uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
@@ -113,11 +132,9 @@ jobs:
             nuget-${{ runner.os }}-
 
       - name: Build C# for CodeQL
-        if: ${{ matrix.language == 'csharp' }}
+        if: ${{ matrix.language == 'csharp' && inputs.codeql-build-mode == 'manual' }}
         shell: bash
         run: |
-          # Inject standard global usings into every project so files that omit
-          # explicit using directives (or rely on ImplicitUsings) always compile.
           find . \( -name "*.csproj" -o -name "*.vbproj" \) \
                -not -path "*/obj/*" -not -path "*/bin/*" | \
           while IFS= read -r proj; do
@@ -131,15 +148,15 @@ jobs:
           global using System.Threading.Tasks;
           EOF
           done
-          # Locate the solution file; fall back to current directory if none found
           sln=$(find . \( -name "*.sln" -o -name "*.slnx" \) \
                     -not -path "*/obj/*" -not -path "*/bin/*" | head -1)
           dotnet build ${sln:-.} \
             --configuration Release \
+            --no-restore \
             /p:TreatWarningsAsErrors=false
 
       - name: Autobuild
-        if: ${{ matrix.language != 'csharp' }}
+        if: ${{ inputs.codeql-build-mode == 'autobuild' }}
         uses: github/codeql-action/autobuild@v4
 
       - name: Check Code Scanning availability
