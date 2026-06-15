@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: PR Agent Review
-        uses: The-PR-Agent/pr-agent@v0.36
+        uses: The-PR-Agent/pr-agent@v0.34.2
 
         env:
           # =====================================================
