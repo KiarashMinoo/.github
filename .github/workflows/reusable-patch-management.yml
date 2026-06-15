@@ -30,6 +30,10 @@ on:
         description: CVSS score threshold at which OWASP Dependency-Check flags CVEs (0–10)
         type: number
         default: 7
+      create-issue:
+        description: Open a GitHub issue summarizing findings when vulnerabilities are detected
+        type: boolean
+        default: true
     secrets:
       gh-token:
         description: GitHub token for uploading SARIF
@@ -41,6 +45,7 @@ on:
 permissions:
   contents: read
   security-events: write
+  issues: write
 
 jobs:
   # ------------------------------------------------------------------
@@ -49,6 +54,7 @@ jobs:
   dotnet-audit:
     name: .NET Package Vulnerability Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       vulnerable-found: ${{ steps.audit.outputs.vulnerable_found }}
       outdated-found: ${{ steps.outdated.outputs.outdated_found }}
@@ -126,6 +132,7 @@ jobs:
   owasp-dependency-check:
     name: OWASP Dependency-Check
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     outputs:
       cves-found: ${{ steps.owasp-findings.outputs.cves_found }}
 
@@ -190,23 +197,21 @@ jobs:
           echo "cves_found=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
   # ------------------------------------------------------------------
-  # 3) Notify repository owner via commit comment
-  #    GitHub emails the @mentioned owner through its own notification
-  #    system — no SMTP or external service required.
+  # 3) Open or update a GitHub issue when vulnerabilities are detected
   # ------------------------------------------------------------------
   notify-owner:
     name: Notify Repository Owner
     needs: [dotnet-audit, owasp-dependency-check]
     if: |
       always() &&
+      inputs.create-issue &&
       (needs.dotnet-audit.outputs.vulnerable-found == 'true' ||
        needs.owasp-dependency-check.outputs.cves-found == 'true')
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 5
 
     steps:
-      - name: Post commit comment mentioning owner
+      - name: Open or update vulnerability issue
         uses: actions/github-script@v9
         with:
           github-token: ${{ github.token }}
@@ -220,8 +225,10 @@ jobs:
             const dotnetRow = dotnetFound ? '❌ Vulnerable packages found' : '✅ Clean';
             const owaspRow  = owaspFound  ? '❌ CVEs detected'             : '✅ Clean';
 
+            const today = new Date().toISOString().split('T')[0];
+            const title = `\u{1F6A8} Patch Management: vulnerability findings (${today})`;
             const body = [
-              `@${owner} — **Dependency vulnerability report for \`${repo}\`**`,
+              `## Dependency Vulnerability Report for \`${repo}\``,
               '',
               '| Scanner | Result |',
               '|---------|--------|',
@@ -232,9 +239,18 @@ jobs:
               `**Run:** [View artifacts and full reports](${runUrl})`,
             ].join('\n');
 
-            await github.rest.repos.createCommitComment({
+            const { data: issues } = await github.rest.issues.listForRepo({
               owner,
               repo,
-              commit_sha: context.sha,
-              body,
+              state: 'open',
+              labels: ['security', 'patch-management'],
             });
+
+            const existing = issues.find(i => i.title.includes('Patch Management: vulnerability findings'));
+            if (existing) {
+              await github.rest.issues.update({ owner, repo, issue_number: existing.number, title, body });
+              core.info(`Updated issue #${existing.number}`);
+            } else {
+              const { data: created } = await github.rest.issues.create({ owner, repo, title, body, labels: ['security', 'patch-management'] });
+              core.info(`Created issue #${created.number}`);
+            }

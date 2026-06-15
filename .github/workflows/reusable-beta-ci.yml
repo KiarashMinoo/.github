@@ -52,6 +52,7 @@ jobs:
   bump-beta:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.bump.outputs.version }}
     steps:
@@ -85,6 +86,7 @@ jobs:
   pack:
     needs: bump-beta
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -173,6 +175,7 @@ jobs:
   publish:
     needs: pack
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout caller repository
         uses: actions/checkout@v6
@@ -228,6 +231,7 @@ jobs:
   cleanup:
     needs: [publish]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: always()
     steps:
       - name: Delete ALL run artifacts

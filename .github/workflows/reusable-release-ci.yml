@@ -52,6 +52,7 @@ jobs:
   finalize-and-tag:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.ver.outputs.version }}      
     steps:
@@ -104,6 +105,7 @@ jobs:
   sync-develop-version:
     needs: finalize-and-tag
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout develop
         uses: actions/checkout@v6
@@ -151,6 +153,7 @@ jobs:
   pack:
     needs: finalize-and-tag
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -226,6 +229,7 @@ jobs:
   publish:
     needs: pack
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout caller repository
         uses: actions/checkout@v6
@@ -281,6 +285,7 @@ jobs:
   cleanup:
     needs: [publish]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: always()
     steps:
       - name: Delete ALL run artifacts
