@@ -46,7 +46,6 @@ permissions:
   contents: read
   issues: write
   security-events: write
-  actions: read
 
 jobs:
   # ------------------------------------------------------------------
