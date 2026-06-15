@@ -30,30 +30,12 @@ on:
         description: CVSS score threshold at which OWASP Dependency-Check flags CVEs (0–10)
         type: number
         default: 7
-      email-to:
-        description: Recipient email address for vulnerability reports
-        type: string
-        default: ''
-      smtp-host:
-        description: SMTP server hostname
-        type: string
-        default: 'smtp.gmail.com'
-      smtp-port:
-        description: SMTP server port
-        type: number
-        default: 587
     secrets:
       gh-token:
         description: GitHub token for uploading SARIF
         required: true
       nvd-api-key:
         description: NVD API key for faster CVE database downloads (optional but recommended)
-        required: false
-      smtp-username:
-        description: SMTP username for sending email reports
-        required: false
-      smtp-password:
-        description: SMTP password or app password for sending email reports
         required: false
 
 permissions:
@@ -208,57 +190,51 @@ jobs:
           echo "cves_found=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
   # ------------------------------------------------------------------
-  # 3) Email report when vulnerabilities are found
+  # 3) Notify repository owner via commit comment
+  #    GitHub emails the @mentioned owner through its own notification
+  #    system — no SMTP or external service required.
   # ------------------------------------------------------------------
-  notify-email:
-    name: Email Vulnerability Report
+  notify-owner:
+    name: Notify Repository Owner
     needs: [dotnet-audit, owasp-dependency-check]
     if: |
       always() &&
-      inputs.email-to != '' &&
       (needs.dotnet-audit.outputs.vulnerable-found == 'true' ||
        needs.owasp-dependency-check.outputs.cves-found == 'true')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
-      - name: Build email body
-        id: body
-        shell: bash
-        env:
-          VULNERABLE: ${{ needs.dotnet-audit.outputs.vulnerable-found }}
-          CVES: ${{ needs.owasp-dependency-check.outputs.cves-found }}
-          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          dotnet_status=$([ "${VULNERABLE}" = "true" ] && echo "VULNERABLE PACKAGES FOUND" || echo "Clean")
-          owasp_status=$([ "${CVES}" = "true" ] && echo "CVEs DETECTED" || echo "Clean")
-
-          {
-            echo "content<<EOF"
-            echo "Dependency Vulnerability Report"
-            echo ""
-            echo "Repository : ${{ github.repository }}"
-            echo "Branch     : ${{ github.ref_name }}"
-            echo "Triggered  : ${{ github.event_name }}"
-            echo "Run URL    : ${RUN_URL}"
-            echo ""
-            echo "Scan Results"
-            echo "------------"
-            echo ".NET Package Audit    : ${dotnet_status}"
-            echo "OWASP Dependency-Check: ${owasp_status}"
-            echo ""
-            echo "Download the full reports (XML, HTML, SARIF) from the workflow run artifacts:"
-            echo "${RUN_URL}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Send vulnerability report email
-        uses: dawidd6/action-send-mail@v3
+      - name: Post commit comment mentioning owner
+        uses: actions/github-script@v9
         with:
-          server_address: ${{ inputs.smtp-host }}
-          server_port: ${{ inputs.smtp-port }}
-          username: ${{ secrets.smtp-username }}
-          password: ${{ secrets.smtp-password }}
-          subject: "[Security] Vulnerable dependencies detected — ${{ github.repository }}"
-          to: ${{ inputs.email-to }}
-          from: GitHub Actions <${{ secrets.smtp-username }}>
-          body: ${{ steps.body.outputs.content }}
+          github-token: ${{ github.token }}
+          script: |
+            const owner       = context.repo.owner;
+            const repo        = context.repo.repo;
+            const runUrl      = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
+            const dotnetFound = '${{ needs.dotnet-audit.outputs.vulnerable-found }}' === 'true';
+            const owaspFound  = '${{ needs.owasp-dependency-check.outputs.cves-found }}' === 'true';
+
+            const dotnetRow = dotnetFound ? '❌ Vulnerable packages found' : '✅ Clean';
+            const owaspRow  = owaspFound  ? '❌ CVEs detected'             : '✅ Clean';
+
+            const body = [
+              `@${owner} — **Dependency vulnerability report for \`${repo}\`**`,
+              '',
+              '| Scanner | Result |',
+              '|---------|--------|',
+              `| .NET \`dotnet list --vulnerable\` | ${dotnetRow} |`,
+              `| OWASP Dependency-Check | ${owaspRow} |`,
+              '',
+              `**Branch:** \`${{ github.ref_name }}\``,
+              `**Run:** [View artifacts and full reports](${runUrl})`,
+            ].join('\n');
+
+            await github.rest.repos.createCommitComment({
+              owner,
+              repo,
+              commit_sha: context.sha,
+              body,
+            });
