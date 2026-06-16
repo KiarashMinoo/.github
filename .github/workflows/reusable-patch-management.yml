@@ -30,6 +30,10 @@ on:
         description: CVSS score threshold at which OWASP Dependency-Check flags CVEs (0–10)
         type: number
         default: 7
+      owasp-suppression-file:
+        description: Path (relative to repo root) to an OWASP Dependency-Check XML suppression file for known false positives
+        type: string
+        default: ''
       create-issue:
         description: Open a GitHub issue summarizing findings when vulnerabilities are detected
         type: boolean
@@ -152,6 +156,7 @@ jobs:
             --enableRetired
             --enableExperimental
             --failOnCVSS ${{ inputs.owasp-fail-cvss }}
+            ${{ inputs.owasp-suppression-file != '' && format('--suppression {0}', inputs.owasp-suppression-file) || '' }}
         env:
           NVD_API_KEY: ${{ secrets.nvd-api-key }}
 
