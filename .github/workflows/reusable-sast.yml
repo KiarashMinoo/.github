@@ -22,18 +22,14 @@ on:
         description: Run CodeQL analysis (requires GitHub Advanced Security on private repos)
         type: boolean
         default: true
-      enable-semgrep:
-        description: Run Semgrep SAST analysis
+      enable-devskim:
+        description: Run DevSkim SAST analysis
         type: boolean
         default: true
       enable-gitleaks:
         description: Run Gitleaks secret scanning
         type: boolean
         default: true
-      semgrep-config:
-        description: Semgrep ruleset — auto, p/default, p/csharp, p/owasp-top-ten, or a file path
-        type: string
-        default: 'p/default'
       codeql-queries:
         description: CodeQL query suite — security-extended or security-and-quality
         type: string
@@ -53,9 +49,6 @@ on:
       gh-token:
         description: GitHub token with security-events:write for SARIF uploads
         required: true
-      semgrep-app-token:
-        description: Semgrep App token (optional, enables Semgrep Cloud dashboard)
-        required: false
 
 permissions:
   contents: read
@@ -180,11 +173,11 @@ jobs:
           upload: ${{ steps.ghas.outputs.enabled == 'true' }}
 
   # ------------------------------------------------------------------
-  # 3) Semgrep — pattern-based SAST with OWASP and custom rule packs
+  # 3) DevSkim — pattern-based SAST with OWASP and security rule packs
   # ------------------------------------------------------------------
-  semgrep:
-    if: ${{ inputs.enable-semgrep }}
-    name: Semgrep SAST
+  devskim:
+    if: ${{ inputs.enable-devskim }}
+    name: DevSkim SAST
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -192,21 +185,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Run Semgrep
-        shell: bash
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.semgrep-app-token }}
-        run: |
-          python3 -m pip install semgrep --quiet
-          semgrep scan \
-            --config "${{ inputs.semgrep-config }}" \
-            --sarif \
-            --output semgrep.sarif \
-            . || true
+      - name: Run DevSkim
+        uses: microsoft/DevSkim-Action@v1
+        with:
+          directory-to-scan: .
+          ignore-globs: |
+            **/Tests/**
+            **/test/**
+            **/*.Tests/**
+            **/*.Test/**
+            **/Migrations/**
+            **/obj/**
+            **/bin/**
+            **/*.g.cs
+            **/*.generated.cs
 
       - name: Check Code Scanning availability
         id: ghas
-        if: always() && hashFiles('semgrep.sarif') != ''
+        if: always()
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.gh-token }}
@@ -217,17 +213,17 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts?per_page=1")
           [[ "$http" == "200" ]] && echo "enabled=true" >> "$GITHUB_OUTPUT" || echo "enabled=false" >> "$GITHUB_OUTPUT"
 
-      - name: Upload Semgrep SARIF to GitHub Security
-        if: always() && steps.ghas.outputs.enabled == 'true' && hashFiles('semgrep.sarif') != ''
+      - name: Upload DevSkim SARIF to GitHub Security
+        if: always() && steps.ghas.outputs.enabled == 'true' && hashFiles('DevSkim-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: semgrep.sarif
-          category: semgrep
+          sarif_file: DevSkim-results.sarif
+          category: devskim
 
-      - name: Upload Semgrep report artifact
+      - name: Upload DevSkim report artifact
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: semgrep-sarif-report
-          path: semgrep.sarif
+          name: devskim-sarif-report
+          path: DevSkim-results.sarif
           if-no-files-found: ignore
