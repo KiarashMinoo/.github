@@ -26,8 +26,8 @@ on:
         description: Run DevSkim SAST analysis
         type: boolean
         default: true
-      enable-gitleaks:
-        description: Run Gitleaks secret scanning
+      enable-secret-scan:
+        description: Run TruffleHog secret scanning
         type: boolean
         default: true
       codeql-queries:
@@ -59,9 +59,9 @@ jobs:
   # ------------------------------------------------------------------
   # 1) Secret scanning — detect hardcoded credentials and API keys
   # ------------------------------------------------------------------
-  gitleaks:
-    if: ${{ inputs.enable-gitleaks }}
-    name: Secret Scanning (Gitleaks)
+  secret-scan:
+    if: ${{ inputs.enable-secret-scan }}
+    name: Secret Scanning (TruffleHog)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -70,10 +70,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v3
-        env:
-          GITHUB_TOKEN: ${{ secrets.gh-token }}
+      - name: Run TruffleHog
+        uses: trufflesecurity/trufflehog@v3
+        with:
+          path: ./
+          base: ${{ github.event.before != '0000000000000000000000000000000000000000' && github.event.before || '' }}
+          head: ${{ github.sha }}
+          extra_args: --only-verified --fail
 
   # ------------------------------------------------------------------
   # 2) CodeQL — multi-language semantic SAST via GitHub Security
@@ -133,7 +136,7 @@ jobs:
           find . \( -name "*.csproj" -o -name "*.vbproj" \) \
                -not -path "*/obj/*" -not -path "*/bin/*" | \
           while IFS= read -r proj; do
-            cat > "$(dirname "$proj")/GlobalUsings.CodeQL.cs" <<'EOF'
+            cat > "$(dirname "$proj")/GlobalUsings.CodeQL.cs" << 'CSEOF'
           global using System;
           global using System.Collections.Generic;
           global using System.IO;
@@ -141,7 +144,7 @@ jobs:
           global using System.Net.Http;
           global using System.Threading;
           global using System.Threading.Tasks;
-          EOF
+          CSEOF
           done
           sln=$(find . \( -name "*.sln" -o -name "*.slnx" \) \
                     -not -path "*/obj/*" -not -path "*/bin/*" | head -1)
@@ -171,6 +174,7 @@ jobs:
         with:
           category: /language:${{ matrix.language }}
           upload: ${{ steps.ghas.outputs.enabled == 'true' }}
+          upload-database: false
 
   # ------------------------------------------------------------------
   # 3) DevSkim — pattern-based SAST with OWASP and security rule packs
