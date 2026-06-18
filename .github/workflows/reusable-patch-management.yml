@@ -14,6 +14,10 @@ on:
         description: Path to .sln/.slnx or project glob
         type: string
         default: '**/*.sln*'
+      nuget-source-url:
+        description: GitHub Packages NuGet source URL for private/org packages (leave empty to skip)
+        type: string
+        default: ''
       fail-on-vulnerable:
         description: Fail the workflow when packages with known CVEs are found
         type: boolean
@@ -71,6 +75,9 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: ${{ inputs.dotnet-versions }}
+          source-url: ${{ inputs.nuget-source-url }}
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.gh-token }}
 
       - name: Cache NuGet
         uses: actions/cache@v5
