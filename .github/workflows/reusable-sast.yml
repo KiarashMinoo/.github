@@ -41,6 +41,10 @@ on:
           findings in your specific codebase.
         type: string
         default: 'none'
+      nuget-source-url:
+        description: GitHub Packages NuGet source URL for private/org packages (leave empty to skip)
+        type: string
+        default: ''
       fail-on-findings:
         description: Fail the workflow if any security findings are detected
         type: boolean
@@ -95,6 +99,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup .NET (GitHub Packages NuGet auth)
+        if: ${{ matrix.language == 'csharp' && inputs.nuget-source-url != '' }}
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet-versions }}
+          source-url: ${{ inputs.nuget-source-url }}
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.gh-token }}
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -119,6 +132,9 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: ${{ inputs.dotnet-versions }}
+          source-url: ${{ inputs.nuget-source-url != '' && inputs.nuget-source-url || null }}
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.gh-token }}
 
       - name: Cache NuGet
         if: ${{ matrix.language == 'csharp' && inputs.codeql-build-mode == 'manual' }}
