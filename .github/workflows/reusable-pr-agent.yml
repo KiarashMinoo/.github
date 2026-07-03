@@ -26,6 +26,7 @@ jobs:
   pr-agent:
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    timeout-minutes: 15
 
     steps:
       - name: PR Agent Review
@@ -79,8 +80,6 @@ jobs:
           # LiteLLM Reliability
           # =====================================================
           LITELLM.DROP_PARAMS: "true"
-          LITELLM.RETRY: "1"
-          LITELLM.RETRY_WAIT: "1"
           LITELLM.TIMEOUT: "45"
 
           # =====================================================

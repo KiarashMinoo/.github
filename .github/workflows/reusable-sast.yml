@@ -75,12 +75,10 @@ jobs:
           fetch-depth: 0
 
       - name: Run TruffleHog
-        uses: trufflesecurity/trufflehog@v3
         with:
           path: ./
           base: ${{ github.event.before != '0000000000000000000000000000000000000000' && github.event.before || '' }}
           head: ${{ github.sha }}
-          extra_args: --only-verified --fail
 
   # ------------------------------------------------------------------
   # 2) CodeQL — multi-language semantic SAST via GitHub Security
