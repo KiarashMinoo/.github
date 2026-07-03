@@ -75,10 +75,13 @@ jobs:
           fetch-depth: 0
 
       - name: Run TruffleHog
+        uses: trufflesecurity/trufflehog@v3.95.6
         with:
           path: ./
           base: ${{ github.event.before != '0000000000000000000000000000000000000000' && github.event.before || '' }}
           head: ${{ github.sha }}
+          extra_args: --only-verified
+          fail: ${{ inputs.fail-on-findings }}
 
   # ------------------------------------------------------------------
   # 2) CodeQL — multi-language semantic SAST via GitHub Security
@@ -245,3 +248,4 @@ jobs:
           name: devskim-sarif-report
           path: DevSkim-results.sarif
           if-no-files-found: ignore
+
