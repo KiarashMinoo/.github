@@ -25,7 +25,7 @@ concurrency:
 jobs:
   pr-agent:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
       - name: PR Agent Review
@@ -51,36 +51,31 @@ jobs:
 
           # =====================================================
           # Extended Fallback Models
-          # Speed -> Reliability -> Quality
+          # Kept short and ordered fastest -> largest so a bad/rate-limited
+          # model gets skipped quickly instead of eating the whole job
+          # timeout. Dropped the 120B/550B reasoning models (nemotron-3
+          # super/ultra) - they're free but too slow for CI review latency.
           # =====================================================
           CONFIG.FALLBACK_MODELS: >
             [
-              "openrouter/cohere/north-mini-code:free",
-              "openrouter/poolside/laguna-xs.2:free",
-              "openrouter/poolside/laguna-xs-2.1:free",
-              "openrouter/poolside/laguna-m.1:free",
-
-              "openrouter/google/gemma-4-26b-a4b-it:free",
-              "openrouter/google/gemma-4-31b-it:free",
-
               "openrouter/meta-llama/llama-3.2-3b-instruct:free",
-              "openrouter/meta-llama/llama-3.3-70b-instruct:free",
-
+              "openrouter/liquid/lfm-2.5-1.2b-instruct:free",
               "openrouter/nvidia/nemotron-nano-9b-v2:free",
-              "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",
-              "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
-              "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
-
+              "openrouter/cohere/north-mini-code:free",
+              "openrouter/qwen/qwen3-coder:free",
+              "openrouter/meta-llama/llama-3.3-70b-instruct:free",
               "openrouter/openai/gpt-oss-120b:free"
             ]
 
           # =====================================================
           # LiteLLM Reliability
+          # Low retry/wait so a stuck free model fails over fast instead
+          # of burning the job timeout on retries.
           # =====================================================
           LITELLM.DROP_PARAMS: "true"
-          LITELLM.RETRY: "3"
-          LITELLM.RETRY_WAIT: "5"
-          LITELLM.TIMEOUT: "45"
+          LITELLM.RETRY: "1"
+          LITELLM.RETRY_WAIT: "2"
+          LITELLM.TIMEOUT: "20"
 
           # =====================================================
           # Speed Optimizations
