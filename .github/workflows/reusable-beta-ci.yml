@@ -57,13 +57,13 @@ jobs:
       version: ${{ steps.bump.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.gh-token }}
 
       - name: Checkout workflow scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: KiarashMinoo/.github
           ref: main
@@ -96,13 +96,13 @@ jobs:
 
     steps:
       - name: Checkout bumped tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: refs/tags/v${{ needs.bump-beta.outputs.version }}
 
       - name: Checkout workflow scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: KiarashMinoo/.github
           ref: main
@@ -178,9 +178,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout caller repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Checkout workflow scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: KiarashMinoo/.github
           ref: main
