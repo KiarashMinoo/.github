@@ -24,7 +24,10 @@ Relocation opportunities are actively being explored for senior backend/platform
 
 <div align="center">
 
-![GitHub Stats](https://github-readme-stats.vercel.app/api?username=KiarashMinoo&show_icons=true&theme=tokyonight&hide_border=true&count_private=true)
+![Glance](http://github-profile-summary-cards.vercel.app/api/cards/profile-details?username=KiarashMinoo&theme=tokyonight)
+
+
+![GitHub Stats](https://github-profile-summary-cards.vercel.app/api/cards/stats?username=KiarashMinoo&theme=tokyonight)
 
 ![GitHub Streak](https://streak-stats.demolab.com?user=KiarashMinoo&theme=tokyonight&hide_border=true)
 
@@ -36,7 +39,9 @@ Relocation opportunities are actively being explored for senior backend/platform
 
 <div align="center">
 
-![Top Languages](https://github-readme-stats.vercel.app/api/top-langs/?username=KiarashMinoo&layout=compact&theme=tokyonight&hide_border=true&langs_count=8)
+![Top Languages by Repository](https://github-profile-summary-cards.vercel.app/api/cards/repos-per-language?username=KiarashMinoo&theme=tokyonight)
+
+![Top Languages by Commit](https://github-profile-summary-cards.vercel.app/api/cards/most-commit-language?username=KiarashMinoo&theme=tokyonight)
 
 </div>
 
