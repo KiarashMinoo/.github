@@ -116,18 +116,26 @@ Group by Conventional Commit type from `type(scope): message`:
 | ⚡ Performance | `perf` |
 | ♻️ Refactoring | `refactor` |
 | 🔒 Security | `security` |
-| 📦 Dependencies | `deps`; or `build` when a `.csproj`/`.props` file changed |
+| 📦 Dependencies | `deps`; or `build` when a package manifest/lockfile changed (see table below) |
 | ⚙️ CI / Tooling | `ci`, `build` |
 | 📝 Documentation | `docs` |
 | 🧪 Tests | `test` |
 | 🏠 Chores | `chore`, `style`, `revert`, anything else |
 
 When the subject does not follow Conventional Commits, infer the type from changed file paths:
-- `*.cs` → feat or fix (use context)
-- `*.csproj` / `*.props` → deps
+- Source files of any language (`*.cs`, `*.ts`/`*.tsx`, `*.py`, `*.go`, `*.java`/`*.kt`, `*.rs`, …) → feat or fix (use context)
+- Package manifest / lockfile changes → deps:
+  | Stack | Files |
+  |---|---|
+  | .NET | `*.csproj`, `*.props`, `packages.lock.json` |
+  | Node/TS | `package.json`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` |
+  | Python | `pyproject.toml`, `requirements*.txt`, `poetry.lock`, `uv.lock` |
+  | Go | `go.mod`, `go.sum` |
+  | Java/Kotlin | `pom.xml`, `build.gradle(.kts)` |
+  | Rust | `Cargo.toml`, `Cargo.lock` |
 - `*.yml` / `*.yaml` → ci
 - `*.md` → docs
-- `Tests/**` → test
+- `Tests/**`, `**/*test*/**`, `**/*.test.*`, `**/*.spec.*` → test
 
 Strip the `type(scope):` prefix from the displayed message.
 
@@ -203,6 +211,6 @@ Create `.github/` if it does not exist.
 - Each entry: one line, capital first letter, no trailing period.
 - Append short SHA in backticks: `(abc1234)`.
 - Never duplicate an entry already in the file.
-- NuGet version bumps detected from `.csproj` / `Directory.Build.props` diffs go in a 📦 Dependencies table (Package | Old | New).
+- Package-manager version bumps detected from manifest diffs (`.csproj`/`Directory.Build.props`, `package.json`, `pyproject.toml`, `go.mod`, `pom.xml`/`build.gradle`, `Cargo.toml`, etc.) go in a 📦 Dependencies table (Package | Old | New).
 - Commits touching only `Tests/**` → 🧪 Tests.
 - Commits touching only `*.md` → 📝 Documentation.

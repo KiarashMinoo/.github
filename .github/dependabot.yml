@@ -20,6 +20,11 @@ updates:
       piranha:
         patterns:
           - "Piranha*"
+    ignore:
+      # FluentAssertions 8+ requires a paid commercial license (2024/2025 relicense);
+      # the free line stops at 7.x. Never let Dependabot auto-bump past it.
+      - dependency-name: "FluentAssertions"
+        versions: [">=8.0.0"]
 
   - package-ecosystem: "npm"
     directory: "/"

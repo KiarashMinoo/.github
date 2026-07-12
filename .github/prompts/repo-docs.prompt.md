@@ -1,11 +1,26 @@
 ---
 mode: agent
-description: "Deep recursion docs under /docs. Generate rich README.md for every non-test folder from *.cs; never leave a README empty. Strip leading src and common project-name prefixes from paths. Include NuGet package metadata. Mermaid diagrams per folder. Auto-generated Docs Catalog in root README. Per-folder retry up to 3 passes. Parents link to children only."
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+description: "Deep recursion docs under /docs. Detects the repo's stack(s) (.NET/TS/Python/Go/Java-Kotlin/Rust) and generates rich README.md for every non-test folder from that stack's source files; never leave a README empty. Strip leading src and common project-name prefixes from paths. Include package-registry metadata (NuGet/npm/PyPI/pkg.go.dev/Maven/crates.io). Mermaid diagrams per folder. Auto-generated Docs Catalog in root README. Per-folder retry up to 3 passes. Parents link to children only."
+tools: ['runCommands', 'editFiles', 'search/codebase']
 
 # Docs Generator
 
 Act autonomously and **do not ask for confirmations** unless Copilot requires it. Use safe defaults.
+
+## Stack Detection
+
+Detect every stack present in the repo — a repo may contain more than one:
+
+| Stack | Detected by | Source glob |
+|---|---|---|
+| .NET | `*.sln`, `*.slnx`, `*.csproj` | `*.cs` |
+| Node / TypeScript | `package.json` | `*.ts`, `*.tsx`, `*.js`, `*.jsx` |
+| Python | `pyproject.toml`, `setup.py`, `requirements*.txt` | `*.py` |
+| Go | `go.mod` | `*.go` |
+| Java / Kotlin | `pom.xml`, `build.gradle(.kts)` | `*.java`, `*.kt` |
+| Rust | `Cargo.toml` | `*.rs` |
+
+Apply the rest of this prompt per folder, using whichever stack(s) that folder's files belong to (see **Language Adapters** below for the per-stack rules referenced throughout).
 
 ## Structural Rules
 
@@ -13,13 +28,26 @@ Act autonomously and **do not ask for confirmations** unless Copilot requires it
 * **Only README.md files** (plus `/docs/README.md` and **root/solution `/README.md` update at the end**).
 * **Parents link to direct children only** (no child content merged into parent).
 * **Drop all `src` segments** from docs paths (case-insensitive).
-* **Strip the common project-name prefix** from each path segment: detect it from the repository root folder name or the solution name (e.g. if the repo is named `Foo.Bar`, strip `Foo.Bar.` from each segment).
+* **Strip the common project-name prefix** from each path segment: detect it from the repository root folder name, or the `name`/identifier in whichever manifest is present (`.sln`/`.slnx` name, `package.json` `name`, `pyproject.toml` `name`, `go.mod` module path, `Cargo.toml` `name`, `pom.xml` `artifactId`) — e.g. if the repo/package is named `Foo.Bar`, strip `Foo.Bar.` (or `foo-bar-`/`foo_bar_`, per that stack's naming convention) from each segment.
 * **Exclude tests** entirely.
 * **Wipe `/docs`** before rebuilding.
-* **NuGet packages**: detect the feed URL from `NuGet.Config` in the repo root. If not found, use `https://api.nuget.org/v3/index.json`.
-* **Create `/docs/README.md`** landing and link to each top-level layer found under `src/`.
+* **Package registry metadata**: resolve per detected stack — see **Package Dependencies** below.
+* **Create `/docs/README.md`** landing and link to each top-level layer found under the primary source root (`src/`, or the repo root for stacks that don't use one).
 * **Update root/solution `/README.md` at the end** to link to `docs/README.md` and embed the auto-generated **Docs Catalog** (see policies below).
 * **No “Source Location” / file system paths** in docs. Use **cross-doc links + anchors** only.
+
+## Language Adapters
+
+For rules below that are described in .NET terms (public/internal types, XML docs, NuGet), apply the equivalent per detected stack:
+
+| Stack | Public-surface rule | Doc-comment source | Manifest → registry (for dependency metadata) |
+|---|---|---|---|
+| .NET | `public`/`internal` types and members | XML doc comments (`///`) | `.csproj`/`Directory.Packages.props` → NuGet (feed from `NuGet.Config`, else `https://api.nuget.org/v3/index.json`) |
+| Node/TS | `export`ed symbols | JSDoc/TSDoc comments | `package.json` → npm registry (`https://registry.npmjs.org`) |
+| Python | names not prefixed `_`, and anything in `__all__` | docstrings | `pyproject.toml`/`setup.py` → PyPI (`https://pypi.org`) |
+| Go | capitalized (exported) identifiers | doc comments directly above the declaration | `go.mod` → `https://pkg.go.dev` |
+| Java/Kotlin | `public` members | Javadoc/KDoc | `pom.xml`/`build.gradle` → Maven Central |
+| Rust | `pub` items | `///` doc comments | `Cargo.toml` → `https://crates.io` |
 
 ### Run Controls (flags)
 
@@ -41,31 +69,31 @@ A folder README **must not** be empty or skeletal. If initial extraction yields 
 
 **Pass 1 — Public surface (normal)**
 
-* Parse `*.cs` in this folder for **public** types/members, XML docs, attributes (serialization/validation).
+* Parse this folder's source files (per **Language Adapters**) for the **public-surface** symbols, their doc comments, and any serialization/validation attributes/decorators.
 * Produce all required sections (see “Folder README — Required Sections”).
 
 **If README is still sparse (e.g., < 10 meaningful lines OR no Types table when code exists), do Pass 2.**
 
 **Pass 2 — Broader scan (internal)**
 
-* Include **internal** types/members for summaries.
-* Use symbol names, attributes, and usage patterns to infer one-liners.
+* Include non-public/internal types/members for summaries.
+* Use symbol names, attributes/decorators, and usage patterns to infer one-liners.
 * Build a **Files** table for every file in the folder (ignore tests), with a short inferred responsibility.
 
 **If sparse again, do Pass 3.**
 
 **Pass 3 — Heuristics & fallbacks**
 
-* Derive concepts from file/namespace names (e.g., “Pipelines”, “Adapters”, “Models”).
+* Derive concepts from file/namespace/package/module names (e.g., “Pipelines”, “Adapters”, “Models”).
 * Generate at least:
   * Overview (2–5 sentences),
   * Files table (all files),
-  * A minimal **API Reference (Summary)** listing key types (public+internal) with one-line descriptions,
+  * A minimal **API Reference (Summary)** listing key types/symbols (public+internal) with one-line descriptions,
   * One **Usage Recipe** relevant to the folder (even if generic, but realistic for the domain).
-* If absolutely no `.cs` files and no children: create a **Leaf README** with “Files: *None*” and a TODO line prompting future description.
+* If the folder has no source files in any detected stack and no children: create a **Leaf README** with “Files: *None*” and a TODO line prompting future description.
 * Mark the README with a gentle banner if content relied on heuristics:
 
-  > *Note: Some details inferred due to limited XML docs. Consider adding summaries/remarks to source.*
+  > *Note: Some details inferred due to limited doc comments. Consider adding summaries to source.*
 
 **Never leave a README with only a title and one small paragraph.**
 
@@ -73,7 +101,7 @@ A folder README **must not** be empty or skeletal. If initial extraction yields 
 
 1. Split repo path → segments.
 2. Remove every `src` segment (case-insensitive).
-3. For each remaining segment, strip the common project-name prefix: detect it from the solution name or repo root folder name (regex `^(<detected-prefix>)([.\-_])?`, case-insensitive). If no prefix is detected, leave the segment unchanged.
+3. For each remaining segment, strip the common project-name prefix: detect it from the repo root folder name or the manifest identifier (see **Structural Rules**) (regex `^(<detected-prefix>)([.\-_])?`, case-insensitive). If no prefix is detected, leave the segment unchanged.
 4. Normalize: collapse duplicate separators/dots/hyphens/underscores; trim; drop empties.
 5. Collision safety: if two sources canonicalize to the same docs path, keep the first; suffix later (e.g., `-rs` or short hash). Record in audit.
 6. Destination: /docs/<canonical>/README.md
@@ -81,7 +109,7 @@ A folder README **must not** be empty or skeletal. If initial extraction yields 
 ## Exclusions (strict)
 
 * Skip paths whose any segment matches (case-insensitive): `test`, `tests`, `testing`, `.tests`, `*unit*test*`, `*integration*test*`.
-* Skip: `.git`, `.github` (except `.github/prompts`), `.vs`, `.idea`, `node_modules`, `bin`, `obj`, caches/build artifacts.
+* Skip: `.git`, `.github` (except `.github/prompts`), `.vs`, `.idea`, `node_modules`, `bin`, `obj`, `dist`, `build`, `.venv`, `__pycache__`, `target`, caches/build artifacts.
 * Do not traverse `/docs` during generation.
 
 ## Cross-Document Linking & Bookmarks (required)
@@ -128,7 +156,7 @@ A folder README **must not** be empty or skeletal. If initial extraction yields 
 
 * If a folder exposes **>2 public types** that collaborate, generate at least one diagram (sequence or class graph).
 * For folders named like `Pipelines`, `Adapters`, `Handlers`, `Controllers`, or `Stores`, include a **sequence** and a **component** diagram.
-* If a `*.csproj` references packages from a private NuGet feed (detected via `NuGet.Config`), add a small **dependency graph** (packages ↔ this assembly).
+* If this folder's manifest references packages from a private registry (e.g. a custom NuGet feed via `NuGet.Config`, a private npm scope/registry, or an internal PyPI index), add a small **dependency graph** (packages ↔ this module/assembly).
 
 ### Mermaid templates
 
@@ -188,11 +216,11 @@ A folder README **must not** be empty or skeletal. If initial extraction yields 
 2. **Overview** (2–5 sentences)
 3. **Files / Scripts**
 
-   * **Files table (C#/general):**
-     | File | Primary type(s) | LOC (approx) | Responsibility |
-   * **Scripts table (when `*.ps1`/`*.psm1` exist):**
+   * **Files table (any stack):**
+     | File | Primary type(s)/symbol(s) | LOC (approx) | Responsibility |
+   * **Scripts table (when `*.ps1`/`*.psm1`/`*.sh` exist):**
      | Script | Type (script/module) | Synopsis | Requires (modules/tools) | Notes |
-4. **Types & Members** (when any C# types exist in this folder)
+4. **Types & Members** (when this folder has source in any detected stack — see **Language Adapters** for what counts as public)
 
    * Types table:
      | Type | Kind | Summary | Inherits/Implements | Key Members |
@@ -220,10 +248,10 @@ A folder README **must not** be empty or skeletal. If initial extraction yields 
 6. **Serialization & Contracts** (if applicable)
 7. **Validation & Constraints** (if applicable)
 8. **Performance Notes** (if applicable)
-9. **NuGet Dependencies** (if used here)
+9. **Package Dependencies** (if used here)
 
    * Table (**Package | Version | Description | Links**)
-   * Links: NuGet feed URL (from `NuGet.Config`), Repo URL (if any), internal anchors
+   * Links: registry URL (per **Language Adapters** — NuGet/npm/PyPI/pkg.go.dev/Maven/crates.io), Repo URL (if any), internal anchors
 10. **Benchmarks / Architecture / Diagrams** (if present)
 
 * Always include a **Diagrams** subsection; for scripts, prefer a Mermaid **flowchart** or **sequence** depicting the control flow and external tools.
@@ -241,13 +269,13 @@ A folder README **must not** be empty or skeletal. If initial extraction yields 
 * Optional sections as applicable
 * Back-to-top
 
-## NuGet Dependencies
+## Package Dependencies
 
-* Detect the NuGet feed URL from `NuGet.Config` at the repo root; fall back to `https://api.nuget.org/v3/index.json`.
-* Detect packages from `*.csproj`, `Directory.Packages.props`, `packages.lock.json`, or `dotnet list package`.
+* Resolve the registry per detected stack (see **Language Adapters**): NuGet (feed from `NuGet.Config`, else `https://api.nuget.org/v3/index.json`), npm, PyPI, `pkg.go.dev`, Maven Central, or crates.io.
+* Detect packages from the stack's manifest/lockfile: `*.csproj`/`Directory.Packages.props`/`packages.lock.json` (.NET), `package.json`/lockfile (Node), `pyproject.toml`/`requirements*.txt` (Python), `go.mod` (Go), `pom.xml`/`build.gradle` (Java/Kotlin), `Cargo.toml` (Rust).
 * Record: `Id`, resolved `Version`, `Description`, `Project URL`, `Repository URL` (if any), `License`, `Authors`.
 * Per-folder README: add table + internal deep links to usage anchors.
-* Root `/README.md`: roll-up table of all unique packages with deep links to folders’ `#nuget-dependencies`.
+* Root `/README.md`: roll-up table of all unique packages with deep links to folders' `#package-dependencies`.
 ## Docs Landing + Root/Solution README
 
 * Create `/docs/README.md` (landing): title, short intro, links to `./Application/README.md` & `./Infrastructure/README.md` (if present), plus other top-level areas.
@@ -265,12 +293,16 @@ A folder README **must not** be empty or skeletal. If initial extraction yields 
       * `Diagrams:✓/✗` (presence under **Diagrams** section)
     * Add a small **Last generated** timestamp.
   * Include a short intro sentence and a link to `docs/README.md`.
-* **Update root/solution `/README.md`** to link to `docs/README.md`, show NuGet sources (parse `nuget.config`, show add-source for GitHub feed if missing) and:
+* **Update root/solution `/README.md`** to link to `docs/README.md`, show package sources (for .NET: parse `nuget.config`, show add-source for GitHub feed if missing), and emit the build commands for whichever stack(s) were detected:
 
-  ```bash
-  dotnet restore
-  dotnet build -c Release
-  ```
+  | Stack | Build commands |
+  |---|---|
+  | .NET | `dotnet restore` / `dotnet build -c Release` |
+  | Node/TS | `npm ci` / `npm run build` |
+  | Python | `pip install -e .` (or `poetry install`/`uv sync` if that lockfile is present) |
+  | Go | `go build ./...` |
+  | Java/Kotlin | `mvn package` (or `./gradlew build`) |
+  | Rust | `cargo build` |
 
 ### Docs Catalog — Generation Rules (Root/Solution README)
 
@@ -278,9 +310,9 @@ A folder README **must not** be empty or skeletal. If initial extraction yields 
 * Build a **two-level** hierarchy (Area → Child): parents list only direct children.
 * For each listed folder, compute badges:
 
-  * **C# types present:**
+  * **Types/symbols present (any stack):**
 
-    * `Types` = count of **public** types summarized (fallback to internal if public is 0 but types exist).
+    * `Types` = count of public-surface types/symbols summarized per **Language Adapters** (fallback to internal/non-public if public is 0 but symbols exist).
     * `Files` = number of non-test files in **Files** table.
   * **Scripts present:**
 

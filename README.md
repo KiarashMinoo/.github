@@ -209,7 +209,7 @@ All repositories must copy these scripts from `.github/scripts/`:
 
 ## AI Prompts for Code Generation & Documentation
 
-This repository includes reusable GitHub Copilot prompts for autonomous code generation tasks. Copy the `prompts` folder to your target repository and use them with Copilot Chat.
+This repository includes reusable GitHub Copilot prompts for autonomous code generation tasks. Copy the `prompts` folder to your target repository and use them with Copilot Chat. Each prompt starts by detecting the target repo's stack(s) (.NET, Node/TypeScript, Python, Go, Java/Kotlin, Rust) and applies the matching rules — .NET remains the most fully specified lane, but the prompts are not .NET-only. Across every stack, only free/open-source libraries with no paid tier are selected (e.g. NSubstitute instead of Moq, FluentAssertions pinned below its commercial-licensed v8).
 
 ### Available Prompts
 
@@ -228,7 +228,7 @@ This repository includes reusable GitHub Copilot prompts for autonomous code gen
 **Features**:
 - Deep recursion: creates `/docs/<path>/README.md` for every folder
 - Auto-generates Docs Catalog in root README
-- Extracts NuGet package metadata from `.csproj` files
+- Detects the repo's stack(s) and extracts package metadata accordingly (NuGet from `.csproj`, npm from `package.json`, PyPI from `pyproject.toml`, pkg.go.dev from `go.mod`, Maven from `pom.xml`, crates.io from `Cargo.toml`)
 - Mermaid diagrams per folder
 - Idempotent (safe to run multiple times)
 
@@ -236,10 +236,9 @@ This repository includes reusable GitHub Copilot prompts for autonomous code gen
 
 **Purpose**: Automatically generate unit and architecture tests  
 **Features**:
-- Reuses or creates `UnitTests` and `ArchTests` projects under `Tests/` folder
-- xUnit + NSubstitute + FluentAssertions unit tests
-- NetArchTest architecture tests for API contracts
-- Targets `net10.0` with preview features
+- Reuses or creates test projects/directories per the target stack's own convention (`Tests/UnitTests`+`Tests/ArchTests` for .NET, `tests/`/`__tests__` for others)
+- Per-stack framework: xUnit+NSubstitute+FluentAssertions(7.x)+NetArchTest (.NET), Vitest+dependency-cruiser (Node/TS), pytest+unittest.mock+import-linter (Python), stdlib testing+testify (Go), JUnit5+Mockito+AssertJ+ArchUnit (Java/Kotlin)
+- Every stack is restricted to free/OSS libraries with no paid tier — Moq and FluentAssertions ≥ 8.0 are explicitly excluded
 - Never modifies production code
 
 ### How to Use Prompts in Your Repository
@@ -291,8 +290,8 @@ Do not modify these manually; they're auto-managed by prompts.
 
 Edit prompts in `.github/prompts/` to match your repository's conventions:
 - Path prefixes to strip (company name, project prefix)
-- NuGet feed URLs
-- Test framework choices
+- Package registry URLs (NuGet feed, private npm/PyPI registries, etc.)
+- Test framework choices per stack (keep to free/OSS libraries — see the Library Selection Rule in `repo-tests.prompt.md`)
 - Documentation structure and folder depth
 
 ---
