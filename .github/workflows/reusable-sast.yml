@@ -75,7 +75,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run TruffleHog
-        uses: trufflesecurity/trufflehog@v3.95.8
+        uses: trufflesecurity/trufflehog@v3.95.9
         with:
           path: ./
           base: ${{ github.event.before != '0000000000000000000000000000000000000000' && github.event.before || '' }}
