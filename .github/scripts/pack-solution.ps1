@@ -292,7 +292,6 @@ if (-not (Test-Path $OutputDir)) {
 $commonPackArgs = @(
   '--nologo'
   '-c', $Configuration
-  '-p:Platform=' + $platformSol
   '-p:ContinuousIntegrationBuild=true'
   '-o', $OutputDir
   '--no-build'
@@ -315,7 +314,19 @@ Remove-Item -Path $markerOk -Force -ErrorAction SilentlyContinue
 Remove-Item -Path $markerFail -Force -ErrorAction SilentlyContinue
 
 if (-not [string]::IsNullOrWhiteSpace($ProjectPaths)) {
-  # Pack explicit project list instead of the whole solution
+  # Pack explicit project list instead of the whole solution.
+  #
+  # Deliberately NOT passing -p:Platform here. When a SOLUTION is built with
+  # -p:Platform="Any CPU", MSBuild uses the .sln's solution-to-project platform
+  # mapping, which normalizes "Any CPU" to the project's actual "AnyCPU" (no
+  # space) -- the default, so no platform segment is inserted into the output
+  # path (bin/Release/<tfm>/...). But invoking `dotnet pack` directly against a
+  # single .csproj bypasses that solution-level mapping: MSBuild takes the
+  # literal "Any CPU" string and DOES insert it into the path
+  # (bin/Any CPU/Release/<tfm>/...), which doesn't match where Build actually
+  # placed the DLL -- causing "file to be packed was not found on disk" with
+  # --no-build. Omitting -p:Platform here lets each project fall back to its
+  # own default (matching what the solution build already produced).
   $projects = @(
     $ProjectPaths -split '[,\r\n]' |
       ForEach-Object { $_.Trim() } |
@@ -342,7 +353,7 @@ if (-not [string]::IsNullOrWhiteSpace($ProjectPaths)) {
   }
 }
 else {
-  $packArgs = @('pack', $SolutionPath) + $commonPackArgs
+  $packArgs = @('pack', $SolutionPath) + @('-p:Platform=' + $platformSol) + $commonPackArgs
   & dotnet @packArgs
   if ($LASTEXITCODE -ne 0) {
     New-Item -ItemType File -Path $markerFail -Force | Out-Null
