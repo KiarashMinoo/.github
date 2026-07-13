@@ -45,7 +45,13 @@ $ErrorActionPreference = 'Stop'
 
 & git add -A
 
-$porcelain = (& git status --porcelain --cached) -join "`n"
+# NOTE: `--cached` is a `git diff` option, not a `git status` one -- passing it here made
+# every `git status` call fail with a usage error, which silently produced an EMPTY
+# $porcelain every single time (native command stderr isn't captured by PowerShell here),
+# so this always concluded "nothing to commit" and skipped the commit entirely, then went
+# on to tag whatever the pre-existing HEAD was. Since `git add -A` already staged
+# everything, plain `--porcelain` correctly reflects the staged changes.
+$porcelain = (& git status --porcelain) -join "`n"
 $pushed = $false
 if ([string]::IsNullOrEmpty($porcelain)) {
     Write-Host "No staged changes to commit." -ForegroundColor Gray
