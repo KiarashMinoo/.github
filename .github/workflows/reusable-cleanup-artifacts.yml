@@ -1,3 +1,5 @@
+name: DEPRECATED - Reusable Cleanup Artifacts (unused, do not call)
+
 # DEPRECATED — DO NOT USE.
 #
 # This reusable workflow is no longer called by anything. Artifact cleanup is now
@@ -12,6 +14,23 @@
 # with "Error calling workflow ... requesting 'actions: write', but is only allowed
 # 'actions: none'." That call pattern has been removed everywhere.
 #
-# No `on:` trigger left below on purpose, so this can't accidentally run. Safe to
-# delete this file entirely (git rm .github/workflows/reusable-cleanup-artifacts.yml).
-name: DEPRECATED - Reusable Cleanup Artifacts (unused, do not call)
+# Changed from `on: workflow_call` to `on: workflow_dispatch` (manual only) so
+# nothing can call this as a reusable workflow anymore, while still keeping the file
+# a syntactically valid workflow (GitHub requires every file under .github/workflows/
+# to have both `on:` and `jobs:`, even ones nothing should use). The single job below
+# is an intentional no-op. Safe to delete this file entirely whenever convenient
+# (git rm .github/workflows/reusable-cleanup-artifacts.yml).
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  noop:
+    name: Deprecated - does nothing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deprecation notice
+        run: |
+          echo "This workflow is deprecated and unused. Artifact cleanup is inlined into reusable-beta-ci.yml and reusable-release-ci.yml instead. Delete this file."
