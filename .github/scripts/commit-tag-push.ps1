@@ -43,21 +43,34 @@ $ErrorActionPreference = 'Stop'
 & git config user.name "github-actions[bot]" 2>$null
 & git config user.email "41898282+github-actions[bot]@users.noreply.github.com" 2>$null
 
-& git add -A
-
 # Keep .ci-scripts (checked out separately by the caller workflow for the shared helper
 # scripts, with its own nested .git) out of every commit. Left alone, git silently records
-# it as an "embedded repository" gitlink the first time `git add -A` sees it -- which then
+# it as an "embedded repository" gitlink the moment `git add -A` sees it -- which then
 # breaks actions/checkout's own post-job submodule cleanup on every subsequent checkout in
 # the run ("fatal: No url found for submodule path '.ci-scripts' in .gitmodules", surfaced
-# as a `##[warning]` annotation). Checking (and removing, if tracked) AFTER `git add -A`
-# covers both a fresh gitlink staged just now and one an earlier buggy run already
-# committed -- either way this un-stages/un-tracks it before the commit below.
-& git ls-files --error-unmatch .ci-scripts *> $null
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "Removing .ci-scripts from git tracking (embedded-repo gitlink)..." -ForegroundColor Yellow
-    & git rm -r --cached .ci-scripts *> $null
+# as a `##[warning]` annotation).
+#
+# A prior version of this script tried to detect-and-untrack it AFTER `git add -A` (via
+# `git ls-files --error-unmatch` + `git rm -r --cached`, with output silenced by `*>
+# $null` and its exit code never checked) -- in practice that `git rm` did not reliably
+# take effect (observed live: .ci-scripts still showed up as `create mode 160000
+# .ci-scripts` in the resulting commit), because failures were being swallowed silently.
+# Two changes, applied BEFORE `git add -A` this time so .ci-scripts is never staged in
+# the first place:
+#   1) Add .ci-scripts to .git/info/exclude (a local-only, never-committed ignore rule)
+#      so `git add -A` skips it outright instead of racing to untrack it afterwards.
+#   2) Unconditionally run `git rm -r --cached --ignore-unmatch .ci-scripts` first, in
+#      case an earlier buggy run already committed it as a gitlink sometime in this
+#      branch's history -- `--ignore-unmatch` makes this a safe no-op when it was never
+#      tracked, so it doesn't need its own exit-code check.
+$excludeFile = '.git/info/exclude'
+$alreadyExcluded = (Test-Path $excludeFile) -and ((Get-Content $excludeFile -Raw) -match '(?m)^\.ci-scripts$')
+if (-not $alreadyExcluded) {
+    Add-Content -Path $excludeFile -Value '.ci-scripts'
 }
+& git rm -r --cached --ignore-unmatch .ci-scripts *> $null
+
+& git add -A
 
 # NOTE: `--cached` is a `git diff` option, not a `git status` one -- passing it here made
 # every `git status` call fail with a usage error, which silently produced an EMPTY
