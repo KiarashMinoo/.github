@@ -169,7 +169,11 @@ jobs:
         id: changelog
         shell: pwsh
         run: |
-          pwsh ./.ci-scripts/.github/scripts/generate-changelog.ps1 -Version "${{ steps.bump.outputs.version }}"
+          # NOTE: tracked in the repo as Generate-Changelog.ps1 (capital G/C) -- a prior
+          # attempt to rename it to all-lowercase got stuck behind a git index lock and
+          # never landed, and Linux Actions runners are case-sensitive, so this path must
+          # match the actual tracked casing exactly.
+          pwsh ./.ci-scripts/.github/scripts/Generate-Changelog.ps1 -Version "${{ steps.bump.outputs.version }}"
 
       - name: Commit version bump + changelog, push, tag, push tag
         id: committag
