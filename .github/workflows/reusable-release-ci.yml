@@ -85,8 +85,10 @@ jobs:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write # required to push the version-bump commit/tag and create the GitHub Release
     outputs:
-      version: ${{ steps.ver.outputs.version }}      
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -138,6 +140,8 @@ jobs:
     needs: finalize-and-tag
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: write # required to push the synced version commit to develop
     steps:
       - name: Checkout develop
         id: checkout-develop
