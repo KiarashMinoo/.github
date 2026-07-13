@@ -45,6 +45,20 @@ $ErrorActionPreference = 'Stop'
 
 & git add -A
 
+# Keep .ci-scripts (checked out separately by the caller workflow for the shared helper
+# scripts, with its own nested .git) out of every commit. Left alone, git silently records
+# it as an "embedded repository" gitlink the first time `git add -A` sees it -- which then
+# breaks actions/checkout's own post-job submodule cleanup on every subsequent checkout in
+# the run ("fatal: No url found for submodule path '.ci-scripts' in .gitmodules", surfaced
+# as a `##[warning]` annotation). Checking (and removing, if tracked) AFTER `git add -A`
+# covers both a fresh gitlink staged just now and one an earlier buggy run already
+# committed -- either way this un-stages/un-tracks it before the commit below.
+& git ls-files --error-unmatch .ci-scripts *> $null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "Removing .ci-scripts from git tracking (embedded-repo gitlink)..." -ForegroundColor Yellow
+    & git rm -r --cached .ci-scripts *> $null
+}
+
 # NOTE: `--cached` is a `git diff` option, not a `git status` one -- passing it here made
 # every `git status` call fail with a usage error, which silently produced an EMPTY
 # $porcelain every single time (native command stderr isn't captured by PowerShell here),
