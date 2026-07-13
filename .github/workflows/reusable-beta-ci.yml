@@ -34,10 +34,21 @@ on:
         description: JSON array of runner OS labels (e.g. '["ubuntu-latest"]')
         type: string
         default: '["ubuntu-latest"]'
+      publish-to-nuget:
+        description: Publish packed packages to NuGet.org
+        type: boolean
+        default: true
+      cleanup-artifacts:
+        description: Delete all run artifacts after publishing to NuGet.org
+        type: boolean
+        default: true
     secrets:
       gh-token:
-        description: GitHub token for release notes
+        description: GitHub token for release notes and artifact cleanup
         required: true
+      nuget-user:
+        description: NuGet.org profile name for Trusted Publishing OIDC login (required when publish-to-nuget is true)
+        required: false
     outputs:
       version:
         description: The bumped -beta.N version (e.g. 1.2.3-beta.4), for callers that need to check out the tag or publish packages
@@ -172,12 +183,88 @@ jobs:
           path: artifacts/pkg/*.snupkg
           if-no-files-found: ignore
 
-  # --- 3) publish to NuGet.org and cleanup artifacts ---
-  # NOTE: NuGet.org Trusted Publishing validates the exact repo + workflow file
-  # that runs the `NuGet/login` OIDC step. Because this reusable workflow lives
-  # in the public KiarashMinoo/.github repo, that login step CANNOT live here —
-  # any external repo could otherwise call this workflow and mint a temporary
-  # publish key for your packages. Each caller repo must therefore add its own
-  # small "publish-nuget" job (NuGet/login + dotnet nuget push) directly in its
-  # own workflow file, using the `pkg-*` / `symbols-*` artifacts uploaded above,
-  # and then call reusable-cleanup-artifacts.yml once publishing is done.
+  # --- 3) publish to NuGet.org ---
+  # SECURITY NOTE: nuget.org Trusted Publishing validates the exact repo AND
+  # workflow file path that executes the `NuGet/login` step, via the
+  # `job_workflow_ref` claim on the OIDC token. That means the trust policy
+  # for any package published from here must point at:
+  #   KiarashMinoo/.github/.github/workflows/reusable-beta-ci.yml@main
+  # Because this repo is PUBLIC, any workflow anywhere that can call this
+  # reusable workflow could in principle receive a temporary NuGet publish
+  # key for whichever package's trust policy names this file. This mirrors
+  # reusable-release-ci.yml's own publish-nuget job exactly (same steps),
+  # so both channels are treated identically — but each uses its OWN file
+  # path, so nuget.org needs a separate trust policy entry per channel per
+  # package (one entry for this file, one for reusable-release-ci.yml).
+  publish-nuget:
+    name: Publish to NuGet.org (beta)
+    needs: pack
+    if: inputs.publish-to-nuget
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # required for Trusted Publishing OIDC
+    steps:
+      - name: Checkout tagged version
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/v${{ needs.bump-beta.outputs.version }}
+
+      - name: Download all packages artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: pkg-*
+          path: ./dist/packages
+          merge-multiple: true
+
+      - name: Download all symbols artifacts (optional)
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: symbols-*
+          path: ./dist/symbols
+          merge-multiple: true
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: NuGet login (OIDC to temp API key — Trusted Publishing)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.nuget-user }}
+
+      - name: Publish packages to NuGet.org
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          shopt -s nullglob
+          for package in ./dist/packages/*.nupkg; do
+            dotnet nuget push "$package" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done
+          for symbols in ./dist/symbols/*.snupkg; do
+            dotnet nuget push "$symbols" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done
+
+  cleanup-nuget-artifacts:
+    name: Delete run artifacts
+    needs: publish-nuget
+    if: always() && inputs.publish-to-nuget && inputs.cleanup-artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Delete ALL run artifacts
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
+            --paginate --jq '.artifacts[].id' | while read -r id; do
+              gh api repos/${{ github.repository }}/actions/artifacts/$id -X DELETE
+            done
