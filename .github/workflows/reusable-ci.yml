@@ -9,7 +9,8 @@ name: Reusable — CI (beta + release, unified)
 #      channel: beta).
 #   2) Build -> optional test -> pack matrix (platforms x configurations x runner-os),
 #      upload artifacts.
-#   3) Publish packages (nuget.org Trusted Publishing OIDC, or GitHub Packages).
+#   3) Publish packages -- nuget.org (classic API key by default, or Trusted Publishing
+#      OIDC if nuget-auth-mode: 'oidc') or GitHub Packages, per nuget-target.
 #   4) Optionally delete run artifacts.
 #
 # No develop-branch sync job -- several callers don't have a develop branch at all, and
@@ -76,9 +77,27 @@ on:
         type: boolean
         default: true
       nuget-target:
-        description: Where to publish packages -- 'nuget.org' (Trusted Publishing OIDC) or 'github-packages' (token push)
+        description: Where to publish packages -- 'nuget.org' or 'github-packages' (token push)
         type: string
         default: 'nuget.org'
+      nuget-auth-mode:
+        description: >
+          How to authenticate the nuget.org push when nuget-target is 'nuget.org'
+          (ignored otherwise) -- 'classic' (a plain API key, via secrets.nuget-api-key)
+          or 'oidc' (Trusted Publishing via NuGet/login). Default 'classic': a classic
+          API key is a plain bearer token, so it works correctly from inside this
+          shared workflow. 'oidc' is kept only for callers that want to try Trusted
+          Publishing anyway, but be aware it currently does NOT work here -- nuget.org
+          validates the OIDC token's job_workflow_ref claim against the exact repo +
+          workflow file path that runs the NuGet/login step, and that always resolves
+          to THIS file's own repo (KiarashMinoo/.github), never the calling repo, no
+          matter how the trust policy is configured. Confirmed as a currently
+          unresolved upstream limitation, not a config mistake: github.com/NuGet/login
+          issues #6 ("Organization Packages Policy couldn't found when using Reusable
+          Workflow") and #24 ("Support for reusable workflows in different
+          repositories"), both open as of 2026-07.
+        type: string
+        default: 'classic'
       pre-build-command:
         description: Optional shell command run before Build (e.g. npm/gulp frontend asset build). No-op when empty.
         type: string
@@ -99,8 +118,11 @@ on:
       gh-token:
         description: GitHub token for pushing the version/changelog commit, tagging, creating the Release, and artifact cleanup
         required: true
+      nuget-api-key:
+        description: Classic NuGet.org API key (nuget.org > API Keys), used when nuget-target is nuget.org and nuget-auth-mode is 'classic' (the default).
+        required: false
       nuget-user:
-        description: NuGet.org profile name for Trusted Publishing OIDC login (required when publish-to-nuget is true and nuget-target is nuget.org)
+        description: NuGet.org profile name for Trusted Publishing OIDC login, used only when nuget-target is nuget.org and nuget-auth-mode is 'oidc'. See that input's description for why OIDC doesn't currently work from here.
         required: false
     outputs:
       version:
@@ -332,14 +354,15 @@ jobs:
           if-no-files-found: ignore
 
   # --- 3) publish packages ---
-  # SECURITY NOTE: nuget.org Trusted Publishing validates the exact repo AND
-  # workflow file path that executes the `NuGet/login` step, via the
-  # `job_workflow_ref` claim on the OIDC token. That means the trust policy for
-  # any package published from here (when nuget-target is nuget.org) must point
-  # at: KiarashMinoo/.github/.github/workflows/reusable-ci.yml@main -- this
-  # single file now covers what used to be two separate trust policy entries
-  # (reusable-beta-ci.yml and reusable-release-ci.yml), since both channels are
-  # handled by this one workflow file.
+  # nuget.org auth (see nuget-auth-mode input): 'classic' (default) pushes with a plain
+  # API key via secrets.nuget-api-key -- no OIDC, no trust policy, so it works fine from
+  # inside this shared workflow. 'oidc' uses NuGet/login + Trusted Publishing, but that
+  # currently does NOT work here: nuget.org validates the OIDC token's job_workflow_ref
+  # claim against the exact repo + workflow file path that runs the NuGet/login step,
+  # which always resolves to KiarashMinoo/.github/.github/workflows/reusable-ci.yml@main
+  # (this file's own repo), never the calling repo -- confirmed via github.com/NuGet/login
+  # issues #6 and #24 (both open as of 2026-07). Kept available only for callers that
+  # want to experiment with it anyway.
   publish-nuget:
     name: Publish packages (${{ inputs.channel }})
     needs: [version, pack]
@@ -348,7 +371,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      id-token: write # required for Trusted Publishing OIDC (nuget-target: nuget.org)
+      id-token: write # required for Trusted Publishing OIDC (nuget-target: nuget.org, nuget-auth-mode: oidc)
       packages: write # required for GitHub Packages (nuget-target: github-packages)
     steps:
       - name: Checkout version-bump commit
@@ -377,14 +400,28 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: NuGet login (OIDC to temp API key — Trusted Publishing)
-        if: inputs.nuget-target == 'nuget.org'
+        if: inputs.nuget-target == 'nuget.org' && inputs.nuget-auth-mode == 'oidc'
         id: login
         uses: NuGet/login@v1
         with:
           user: ${{ secrets.nuget-user }}
 
-      - name: Publish packages to NuGet.org
-        if: inputs.nuget-target == 'nuget.org'
+      - name: Publish packages to NuGet.org (classic API key)
+        if: inputs.nuget-target == 'nuget.org' && inputs.nuget-auth-mode == 'classic'
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ secrets.nuget-api-key }}
+        run: |
+          shopt -s nullglob
+          for package in ./dist/packages/*.nupkg; do
+            dotnet nuget push "$package" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done
+          for symbols in ./dist/symbols/*.snupkg; do
+            dotnet nuget push "$symbols" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done
+
+      - name: Publish packages to NuGet.org (OIDC Trusted Publishing)
+        if: inputs.nuget-target == 'nuget.org' && inputs.nuget-auth-mode == 'oidc'
         shell: bash
         env:
           NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
