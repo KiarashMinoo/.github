@@ -118,6 +118,21 @@ on:
       gh-token:
         description: GitHub token for pushing the version/changelog commit, tagging, creating the Release, and artifact cleanup
         required: true
+      push-token:
+        description: >
+          Optional override credential used ONLY for the version job's initial checkout
+          (which sets up the git credential that commit-tag-push.ps1's later `git push`
+          / tag push reuse) -- falls back to gh-token when not supplied. Needed when the
+          executing branch has a classic "Require a pull request before merging" branch
+          protection rule with no usable bypass for the default GITHUB_TOKEN identity
+          (github-actions[bot]): classic protection's only bypass is an
+          "administrators can bypass" toggle tied to a real admin-role account, and
+          Ruleset bypass lists on personal (non-org) repos are often limited to role-
+          based actors too, neither of which the default token can satisfy. Set this to
+          a Personal Access Token belonging to an account with Admin role on the repo
+          (and add that role to the branch protection/ruleset's bypass list) to let the
+          automated commit push through as that account instead.
+        required: false
       nuget-api-key:
         description: Classic NuGet.org API key (nuget.org > API Keys), used when nuget-target is nuget.org and nuget-auth-mode is 'classic' (the default).
         required: false
@@ -165,7 +180,11 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          token: ${{ secrets.gh-token }}
+          # push-token (if supplied) overrides gh-token here ONLY -- this is what sets
+          # up the git credential the later `git push` / tag push in
+          # commit-tag-push.ps1 actually reuses, so this is the one checkout that needs
+          # to authenticate as an account that can satisfy a branch-protection bypass.
+          token: ${{ secrets.push-token != '' && secrets.push-token || secrets.gh-token }}
 
       - name: Checkout workflow scripts
         uses: actions/checkout@v7
