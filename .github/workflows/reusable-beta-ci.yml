@@ -35,19 +35,39 @@ on:
         type: string
         default: '["ubuntu-latest"]'
       publish-to-nuget:
-        description: Publish packed packages to NuGet.org
+        description: Publish packed packages
         type: boolean
         default: true
       cleanup-artifacts:
-        description: Delete all run artifacts after publishing to NuGet.org
+        description: Delete all run artifacts after publishing
         type: boolean
         default: true
+      nuget-target:
+        description: Where to publish packages -- 'nuget.org' (Trusted Publishing OIDC) or 'github-packages' (token push)
+        type: string
+        default: 'nuget.org'
+      pre-build-command:
+        description: Optional shell command run before Build (e.g. npm/gulp frontend asset build). No-op when empty.
+        type: string
+        default: ''
+      test-command:
+        description: Optional shell command run after Build, before Pack (e.g. dotnet test / ArchTests). No-op when empty.
+        type: string
+        default: ''
+      post-pack-command:
+        description: Optional shell command run after Pack (e.g. smoke-test against packed nupkgs). No-op when empty.
+        type: string
+        default: ''
+      pack-project-paths:
+        description: Optional newline/comma-separated list of explicit .csproj paths to pack instead of the whole solution (use when Directory.Build.props sets IsPackable=true globally, so a solution-wide pack would also try to pack test/example projects). No-op when empty.
+        type: string
+        default: ''
     secrets:
       gh-token:
         description: GitHub token for release notes and artifact cleanup
         required: true
       nuget-user:
-        description: NuGet.org profile name for Trusted Publishing OIDC login (required when publish-to-nuget is true)
+        description: NuGet.org profile name for Trusted Publishing OIDC login (required when publish-to-nuget is true and nuget-target is nuget.org)
         required: false
     outputs:
       version:
@@ -94,7 +114,7 @@ jobs:
             pwsh ./.ci-scripts/.github/scripts/update-version.ps1 -Channel beta -CommitAndTag -UpdateCsproj
           }
 
-  # --- 2) pack matrix (sln only), add filtered release notes, upload artifacts ---
+  # --- 2) build -> optional test -> pack matrix (sln only), add filtered release notes, upload artifacts ---
   pack:
     needs: bump-beta
     runs-on: ${{ matrix.os }}
@@ -148,7 +168,38 @@ jobs:
             -After "${{ github.sha }}" `
             -SetGitHubEnv
 
-      - name: Build and Pack
+      - name: Run pre-build command
+        if: inputs.pre-build-command != ''
+        shell: bash
+        run: ${{ inputs.pre-build-command }}
+
+      - name: Build
+        id: build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          $solutionPath = "${{ inputs.solution-path }}"
+          if (-not [System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($solutionPath) -and -not (Test-Path $solutionPath)) {
+            Write-Host "Provided solution path '$solutionPath' not found. Falling back to '**/*.sln*'."
+            $solutionPath = '**/*.sln*'
+          }
+          $params = @{
+            Configuration = "${{ matrix.configuration }}"
+            Platform = "${{ matrix.platform_in }}"
+            SolutionPath = $solutionPath
+            SkipPack = $true
+          }
+          pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 @params
+
+      - name: Run tests
+        if: inputs.test-command != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: ${{ inputs.test-command }}
+
+      - name: Pack
         id: pack
         shell: pwsh
         env:
@@ -164,9 +215,21 @@ jobs:
             Configuration = "${{ matrix.configuration }}"
             Platform = "${{ matrix.platform_in }}"
             SolutionPath = $solutionPath
+            SkipClean = $true
+            SkipRestore = $true
+            SkipBuild = $true
             ReleaseNotes = $releaseNotes
           }
+          $projectPaths = "${{ inputs.pack-project-paths }}"
+          if (-not [string]::IsNullOrWhiteSpace($projectPaths)) {
+            $params.ProjectPaths = $projectPaths
+          }
           pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 @params
+
+      - name: Run post-pack command
+        if: inputs.post-pack-command != ''
+        shell: bash
+        run: ${{ inputs.post-pack-command }}
 
       - name: Upload packages artifact (unique per leg)
         uses: actions/upload-artifact@v7
@@ -183,12 +246,12 @@ jobs:
           path: artifacts/pkg/*.snupkg
           if-no-files-found: ignore
 
-  # --- 3) publish to NuGet.org ---
+  # --- 3) publish packages ---
   # SECURITY NOTE: nuget.org Trusted Publishing validates the exact repo AND
   # workflow file path that executes the `NuGet/login` step, via the
   # `job_workflow_ref` claim on the OIDC token. That means the trust policy
-  # for any package published from here must point at:
-  #   KiarashMinoo/.github/.github/workflows/reusable-beta-ci.yml@main
+  # for any package published from here (when nuget-target is nuget.org) must
+  # point at: KiarashMinoo/.github/.github/workflows/reusable-beta-ci.yml@main
   # Because this repo is PUBLIC, any workflow anywhere that can call this
   # reusable workflow could in principle receive a temporary NuGet publish
   # key for whichever package's trust policy names this file. This mirrors
@@ -197,14 +260,15 @@ jobs:
   # path, so nuget.org needs a separate trust policy entry per channel per
   # package (one entry for this file, one for reusable-release-ci.yml).
   publish-nuget:
-    name: Publish to NuGet.org (beta)
+    name: Publish packages (beta)
     needs: pack
     if: inputs.publish-to-nuget
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
-      id-token: write # required for Trusted Publishing OIDC
+      id-token: write # required for Trusted Publishing OIDC (nuget-target: nuget.org)
+      packages: write # required for GitHub Packages (nuget-target: github-packages)
     steps:
       - name: Checkout tagged version
         uses: actions/checkout@v7
@@ -232,12 +296,14 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: NuGet login (OIDC to temp API key — Trusted Publishing)
+        if: inputs.nuget-target == 'nuget.org'
         id: login
         uses: NuGet/login@v1
         with:
           user: ${{ secrets.nuget-user }}
 
       - name: Publish packages to NuGet.org
+        if: inputs.nuget-target == 'nuget.org'
         shell: bash
         env:
           NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
@@ -248,6 +314,21 @@ jobs:
           done
           for symbols in ./dist/symbols/*.snupkg; do
             dotnet nuget push "$symbols" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done
+
+      - name: Publish packages to GitHub Packages
+        if: inputs.nuget-target == 'github-packages'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          shopt -s nullglob
+          dotnet nuget add source --username github --password "$GH_TOKEN" --store-password-in-clear-text --name github-packages "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
+          for package in ./dist/packages/*.nupkg; do
+            dotnet nuget push "$package" --api-key "$GH_TOKEN" --source github-packages --skip-duplicate
+          done
+          for symbols in ./dist/symbols/*.snupkg; do
+            dotnet nuget push "$symbols" --api-key "$GH_TOKEN" --source github-packages --skip-duplicate
           done
 
   cleanup-nuget-artifacts:

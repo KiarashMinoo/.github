@@ -7,7 +7,11 @@
    - beta channel: 
      * First beta after release: bump patch (1.1.1 -> 1.1.2-beta.1)
      * Subsequent betas: increment beta.N (1.1.2-beta.1 -> 1.1.2-beta.2)
-   - release channel: Strip prerelease suffix only (1.1.2-beta.5 -> 1.1.2)
+   - release channel:
+     * From a prerelease (e.g. 1.1.2-beta.5): strip the suffix only (patch was
+       already bumped when the beta cycle started) -> 1.1.2
+     * From a plain version with no prerelease (release-only flow, no beta
+       stage, e.g. IIIF): bump the patch directly -> 1.1.2 -> 1.1.3
    - SetVersion: Set version to a specific value (used for syncing branches)
   
   Returns outputs via GITHUB_OUTPUT: version=<new-version>
@@ -203,7 +207,14 @@ if ($hasChannel -and $Channel -eq 'beta') {
     }
 }
 elseif ($hasChannel -and $Channel -eq 'release') {
-    # Release channel: just strip prerelease suffix, don't bump version
+    # Release channel: if coming from a prerelease (e.g. 1.1.2-beta.5), just strip the
+    # suffix — the patch was already bumped when the beta cycle started. If there's no
+    # prerelease suffix at all, this is a release-only flow with no preceding beta stage
+    # (e.g. IIIF), so bump the patch directly instead of re-tagging the same version.
+    if (-not $pre) {
+        $bld += 1
+        Write-Host "No prerelease suffix on current version -- release-only flow, bumping patch" -ForegroundColor Yellow
+    }
     if ($format -eq '4') {
         $newVersion = "{0}.{1}.{2}.{3}" -f $maj, $min, $bld, $rev
     }
@@ -246,7 +257,7 @@ else {
 Write-Host ('Version updated successfully to ' + $newVersion)
 
 if ($CommitAndTag) {
-    Write-Host "\n--- Commit & Tag (requested) ---" -ForegroundColor Yellow
+    Write-Host "`n--- Commit & Tag (requested) ---" -ForegroundColor Yellow
 
     # Configure git user (same as workflows)
     & git config user.name "github-actions[bot]" 2>$null

@@ -33,29 +33,44 @@
 .PARAMETER SkipBuild
   Skip the build step
 
+.PARAMETER SkipPack
+  Skip the pack step (used to split Build and Pack into separate CI steps, e.g. to
+  run tests/ArchTests between them)
+
 .PARAMETER ReleaseNotes
   Optional release notes to embed in packages
+
+.PARAMETER ProjectPaths
+  Optional: newline- or comma-separated list of explicit .csproj paths (relative to repo root)
+  to pack instead of the whole solution. Use this when the solution's Directory.Build.props sets
+  IsPackable=true globally (so `dotnet pack` on the .sln/.slnx would also try to pack test/example
+  projects) -- listing only the real package projects here avoids that.
 
 .EXAMPLE
   pwsh .github/scripts/pack-solution.ps1 -Configuration Release -Platform AnyCpu
   pwsh .github/scripts/pack-solution.ps1 -Configuration Debug -Platform x64 -SolutionPath MySolution.sln
   pwsh .github/scripts/pack-solution.ps1 -Configuration Release -Platform AnyCpu -SolutionPath MySolution.slnx
+  pwsh .github/scripts/pack-solution.ps1 -Configuration Release -Platform AnyCpu -SkipPack   # build only
+  pwsh .github/scripts/pack-solution.ps1 -Configuration Release -Platform AnyCpu -SkipClean -SkipRestore -SkipBuild  # pack only
+  pwsh .github/scripts/pack-solution.ps1 -Configuration Release -Platform AnyCpu -SkipClean -SkipRestore -SkipBuild -ProjectPaths "src/A/A.csproj,src/B/B.csproj"
 #>
 
 param(
   [Parameter(Mandatory = $true)]
   [string]$Configuration,
-    
+
   [Parameter(Mandatory = $true)]
   [ValidateSet('AnyCpu', 'x86', 'x64', 'ARM64')]
   [string]$Platform,
-    
+
   [string]$SolutionPath,
   [string]$OutputDir = 'artifacts/pkg',
   [switch]$SkipClean = $false,
   [switch]$SkipRestore = $false,
   [switch]$SkipBuild = $false,
-  [string]$ReleaseNotes = ''
+  [switch]$SkipPack = $false,
+  [string]$ReleaseNotes = '',
+  [string]$ProjectPaths = ''
 )
 
 Set-StrictMode -Version Latest
@@ -264,14 +279,17 @@ if (-not $SkipBuild) {
 }
 
 # Pack
+if ($SkipPack) {
+  Write-Host "`n--- Pack skipped (-SkipPack) ---" -ForegroundColor Yellow
+  exit 0
+}
+
 Write-Host "`n--- Pack ---" -ForegroundColor Yellow
 if (-not (Test-Path $OutputDir)) {
   New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 }
 
-$packArgs = @(
-  'pack'
-  $SolutionPath
+$commonPackArgs = @(
   '--nologo'
   '-c', $Configuration
   '-p:Platform=' + $platformSol
@@ -286,7 +304,7 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseNotes)) {
   # Normalize release notes to a single-line value and remove double-quotes
   $safeReleaseNotes = $ReleaseNotes -replace "\r?\n", ' '
   $safeReleaseNotes = $safeReleaseNotes -replace '"', "'"
-  $packArgs += ('-p:PackageReleaseNotes="{0}"' -f $safeReleaseNotes)
+  $commonPackArgs += ('-p:PackageReleaseNotes="{0}"' -f $safeReleaseNotes)
 }
 
 $markerOk = Join-Path $OutputDir '.PACK_OK'
@@ -296,10 +314,40 @@ $markerFail = Join-Path $OutputDir '.PACK_FAIL'
 Remove-Item -Path $markerOk -Force -ErrorAction SilentlyContinue
 Remove-Item -Path $markerFail -Force -ErrorAction SilentlyContinue
 
-& dotnet @packArgs
-if ($LASTEXITCODE -ne 0) {
-  New-Item -ItemType File -Path $markerFail -Force | Out-Null
-  exit $LASTEXITCODE 
+if (-not [string]::IsNullOrWhiteSpace($ProjectPaths)) {
+  # Pack explicit project list instead of the whole solution
+  $projects = @(
+    $ProjectPaths -split '[,\r\n]' |
+      ForEach-Object { $_.Trim() } |
+      Where-Object { $_ }
+  )
+  Write-Host "Packing $($projects.Count) explicit project(s):"
+  foreach ($proj in $projects) {
+    Write-Host "  - $proj"
+  }
+
+  foreach ($proj in $projects) {
+    $projPath = Join-Path $repoRoot $proj
+    if (-not (Test-Path $projPath)) {
+      Write-Error "Project not found: $proj"
+      New-Item -ItemType File -Path $markerFail -Force | Out-Null
+      exit 1
+    }
+    $packArgs = @('pack', $projPath) + $commonPackArgs
+    & dotnet @packArgs
+    if ($LASTEXITCODE -ne 0) {
+      New-Item -ItemType File -Path $markerFail -Force | Out-Null
+      exit $LASTEXITCODE
+    }
+  }
+}
+else {
+  $packArgs = @('pack', $SolutionPath) + $commonPackArgs
+  & dotnet @packArgs
+  if ($LASTEXITCODE -ne 0) {
+    New-Item -ItemType File -Path $markerFail -Force | Out-Null
+    exit $LASTEXITCODE
+  }
 }
 
 # Create success marker
@@ -327,5 +375,5 @@ if ($symbols) {
   }
 }
 
-Write-Host "`nOutput directory: $OutputDir" -ForegroundColor Green
+Write-Host "`nOutput directory: $OutputDir"
 exit 0
