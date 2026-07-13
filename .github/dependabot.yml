@@ -1,54 +1,7 @@
 version: 2
 updates:
-  - package-ecosystem: "nuget"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "08:30"
-      timezone: "UTC"
-    labels:
-      - "dependencies"
-      - "security"
-    open-pull-requests-limit: 10
-    groups:
-      microsoft-extensions:
-        patterns:
-          - "Microsoft.Extensions.*"
-          - "Microsoft.AspNetCore.*"
-          - "Asp.Versioning.*"
-      piranha:
-        patterns:
-          - "Piranha*"
-    ignore:
-      # FluentAssertions 8+ requires a paid commercial license (2024/2025 relicense);
-      # the free line stops at 7.x. Never let Dependabot auto-bump past it.
-      - dependency-name: "FluentAssertions"
-        versions: [">=8.0.0"]
-
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "08:30"
-      timezone: "UTC"
-    labels:
-      - "dependencies"
-    open-pull-requests-limit: 5
-
-  - package-ecosystem: "docker"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "08:30"
-      timezone: "UTC"
-    labels:
-      - "dependencies"
-      - "security"
-    open-pull-requests-limit: 3
-
+  # This repo is the org profile/reusable-workflows repo — no .csproj, package.json,
+  # or Dockerfile live here, so only the github-actions ecosystem applies.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

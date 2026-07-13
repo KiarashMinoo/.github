@@ -49,6 +49,13 @@ on:
         description: Fail the workflow if any security findings are detected
         type: boolean
         default: false
+      enable-pr-gate:
+        description: |
+          Block pull requests that have open high/critical code-scanning alerts
+          (waits for CodeQL results, then fails the PR if any are found).
+          Requires enable-codeql to be true and the workflow to run on pull_request.
+        type: boolean
+        default: false
     secrets:
       gh-token:
         description: GitHub token with security-events:write for SARIF uploads
@@ -165,6 +172,7 @@ jobs:
           done
           sln=$(find . \( -name "*.sln" -o -name "*.slnx" \) \
                     -not -path "*/obj/*" -not -path "*/bin/*" | head -1)
+          dotnet restore ${sln:-.}
           dotnet build ${sln:-.} \
             --configuration Release \
             --no-restore \
@@ -248,4 +256,73 @@ jobs:
           name: devskim-sarif-report
           path: DevSkim-results.sarif
           if-no-files-found: ignore
+
+  # ------------------------------------------------------------------
+  # 4) PR Security Gate — block PRs with open high/critical CodeQL alerts
+  # ------------------------------------------------------------------
+  pr-security-gate:
+    name: PR Security Gate (High/Critical)
+    if: ${{ inputs.enable-pr-gate && github.event_name == 'pull_request' }}
+    needs: codeql
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      security-events: read
+      contents: read
+
+    steps:
+      - name: Fail PR on open high/critical code-scanning alerts
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.gh-token }}
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            async function getAlerts() {
+              return github.paginate(github.rest.codeScanning.listAlertsForRepo, {
+                owner,
+                repo,
+                state: 'open',
+                pr: prNumber,
+                per_page: 100
+              });
+            }
+
+            let alerts;
+            for (let attempt = 1; attempt <= 6; attempt++) {
+              try {
+                alerts = await getAlerts();
+                break;
+              } catch (error) {
+                const noAnalysis = error.status === 404 && String(error.message || '').toLowerCase().includes('no analysis found');
+                if (!noAnalysis) {
+                  throw error;
+                }
+
+                if (attempt === 6) {
+                  core.setFailed('Code scanning analysis was not available after waiting for upload propagation.');
+                  return;
+                }
+
+                core.warning(`Code scanning results not ready yet (attempt ${attempt}/6). Retrying in 10 seconds.`);
+                await new Promise(resolve => setTimeout(resolve, 10_000));
+              }
+            }
+
+            const blocking = alerts.filter(a => {
+              const sev = (a.rule?.security_severity_level || '').toLowerCase();
+              return sev === 'high' || sev === 'critical';
+            });
+
+            if (blocking.length > 0) {
+              core.error(`Blocking PR: found ${blocking.length} open high/critical code-scanning alert(s).`);
+              for (const alert of blocking) {
+                core.error(`- [${alert.number}] ${alert.rule?.id || 'unknown-rule'} (${alert.rule?.security_severity_level || 'unknown'})`);
+              }
+              core.setFailed('PR blocked by SAST high/critical findings.');
+            } else {
+              core.info('No open high/critical code-scanning alerts for this PR.');
+            }
 

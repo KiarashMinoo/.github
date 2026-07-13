@@ -1,0 +1,36 @@
+name: Reusable — Cleanup Run Artifacts
+
+# Deletes ALL artifacts uploaded during the current workflow run. Intended to
+# be called last, after a caller's own publish job(s) have downloaded whatever
+# artifacts they needed (e.g. pkg-*/symbols-* produced by reusable-beta-ci.yml
+# or reusable-release-ci.yml).
+#
+# This step only talks to the GitHub API for the CALLING repository via the
+# normal secrets-passthrough mechanism, so — unlike NuGet Trusted Publishing —
+# it is safe to keep centralized here.
+
+on:
+  workflow_call:
+    secrets:
+      gh-token:
+        description: GitHub token with actions:write to delete run artifacts
+        required: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  cleanup:
+    name: Delete ALL run artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Delete ALL run artifacts
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
+            --paginate --jq '.artifacts[].id' | while read -r id; do \
+              gh api repos/${{ github.repository }}/actions/artifacts/$id -X DELETE; \
+            done

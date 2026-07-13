@@ -38,9 +38,10 @@ on:
       gh-token:
         description: GitHub token for release notes
         required: true
-      nuget-api-key:
-        description: NuGet.org API key for publishing
-        required: false
+    outputs:
+      version:
+        description: The bumped -beta.N version (e.g. 1.2.3-beta.4), for callers that need to check out the tag or publish packages
+        value: ${{ jobs.bump-beta.outputs.version }}
 
 permissions:
   contents: read
@@ -171,74 +172,12 @@ jobs:
           path: artifacts/pkg/*.snupkg
           if-no-files-found: ignore
 
-# --- 3) publish to GitHub Packages AND NuGet.org simultaneously ---
-  publish:
-    needs: pack
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout caller repository
-        uses: actions/checkout@v7
-      - name: Checkout workflow scripts
-        uses: actions/checkout@v7
-        with:
-          repository: KiarashMinoo/.github
-          ref: main
-          sparse-checkout: .github/scripts
-          path: .ci-scripts
-          token: ${{ secrets.gh-token }}
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v5
-        with: { dotnet-version: 8.0.x }
-
-      - name: Download all packages artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: pkg-*
-          path: ./dist/packages
-          merge-multiple: true
-
-      - name: Download all symbols artifacts (optional)
-        continue-on-error: true
-        uses: actions/download-artifact@v8
-        with:
-          pattern: symbols-*
-          path: ./dist/symbols
-          merge-multiple: true
-      
-      - name: Publish packages to NuGet.org
-        shell: pwsh
-        env:
-          NUGET_API_KEY: ${{ secrets.nuget-api-key }}
-        run: |
-          if (-not $env:NUGET_API_KEY) { 
-            Write-Host 'NUGET_API_KEY secret not set; skipping NuGet.org publish.' 
-            exit 0 
-          }
-          $args = @(
-            '-NuGetSource', 'https://api.nuget.org/v3/index.json',
-            '-NuGetApiKey', $env:NUGET_API_KEY
-          )
-
-          if ('${{ inputs.nuget-filter-enabled }}' -eq 'true') {
-            $args += @('-FilterPackages', '-FilterPattern', '${{ inputs.nuget-filter-pattern }}')
-          }
-
-          pwsh ./.ci-scripts/.github/scripts/publish-packages.ps1 @args
-
-  # --- 4) cleanup: delete ALL run artifacts after publish job completes ---
-  cleanup:
-    needs: [publish]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    if: always()
-    steps:
-      - name: Delete ALL run artifacts
-        env:
-          GH_TOKEN: ${{ secrets.gh-token }}
-        run: |
-          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
-            --paginate --jq '.artifacts[].id' | while read -r id; do \
-              gh api repos/${{ github.repository }}/actions/artifacts/$id -X DELETE; \
-            done
+  # --- 3) publish to NuGet.org and cleanup artifacts ---
+  # NOTE: NuGet.org Trusted Publishing validates the exact repo + workflow file
+  # that runs the `NuGet/login` OIDC step. Because this reusable workflow lives
+  # in the public KiarashMinoo/.github repo, that login step CANNOT live here —
+  # any external repo could otherwise call this workflow and mint a temporary
+  # publish key for your packages. Each caller repo must therefore add its own
+  # small "publish-nuget" job (NuGet/login + dotnet nuget push) directly in its
+  # own workflow file, using the `pkg-*` / `symbols-*` artifacts uploaded above,
+  # and then call reusable-cleanup-artifacts.yml once publishing is done.
