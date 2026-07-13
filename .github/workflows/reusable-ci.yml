@@ -1,0 +1,428 @@
+name: Reusable — CI (beta + release, unified)
+
+# Single reusable workflow for both channels (replaces reusable-beta-ci.yml and
+# reusable-release-ci.yml, now deprecated stubs). Flow, per the executing branch:
+#   1) Bump version based on `channel` (beta|release), generate a CHANGELOG.md section
+#      + release notes for everything since the previous tag, commit both together and
+#      push to the executing branch, then ALWAYS tag that commit (regardless of
+#      channel) and create a GitHub Release from the generated notes (prerelease for
+#      channel: beta).
+#   2) Build -> optional test -> pack matrix (platforms x configurations x runner-os),
+#      upload artifacts.
+#   3) Publish packages (nuget.org Trusted Publishing OIDC, or GitHub Packages).
+#   4) Optionally delete run artifacts.
+#
+# No develop-branch sync job -- several callers don't have a develop branch at all, and
+# the ones that do can just let their next beta run pick up the released version
+# naturally (or sync it manually) rather than this workflow assuming develop exists.
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: Which SemVer channel this run bumps -- 'beta' or 'release'
+        type: string
+        required: true
+      bump-component:
+        description: >
+          Which version component to bump (major/minor/patch) when starting fresh from a
+          version with no prerelease suffix (first beta after a release, or a release-only
+          flow with no beta stage, e.g. IIIF). Default 'major' matches the original
+          protocol (one major bump per beta cycle / release-only push). Use 'minor' for
+          repos that should grow the minor version and keep major fixed instead.
+        type: string
+        default: 'major'
+      create-github-release:
+        description: Create a GitHub Release (with the generated changelog section as its body) for the new tag
+        type: boolean
+        default: true
+      dotnet-versions:
+        description: .NET SDK versions to install
+        type: string
+        default: |
+          8.0.x
+          9.0.x
+          10.0.x
+      solution-path:
+        description: Path to .sln/.slnx or project glob
+        type: string
+        default: '**/*.sln*'
+      nuget-filter-enabled:
+        description: Enable NuGet package filtering during publish
+        type: boolean
+        default: false
+      nuget-filter-pattern:
+        description: Regex pattern used when nuget-filter-enabled is true
+        type: string
+        default: '^(?!.*\.(Debug|ARM64|x86|x64)).*\.nupkg$'
+      platforms:
+        description: JSON array of platforms to build (e.g. '["AnyCpu","x64"]')
+        type: string
+        default: '["AnyCpu", "x86", "x64", "ARM64"]'
+      configurations:
+        description: JSON array of build configurations (e.g. '["Release"]')
+        type: string
+        default: '["Debug", "Release"]'
+      runner-os:
+        description: JSON array of runner OS labels (e.g. '["ubuntu-latest"]')
+        type: string
+        default: '["ubuntu-latest"]'
+      publish-to-nuget:
+        description: Publish packed packages
+        type: boolean
+        default: true
+      cleanup-artifacts:
+        description: Delete all run artifacts after publishing
+        type: boolean
+        default: true
+      nuget-target:
+        description: Where to publish packages -- 'nuget.org' (Trusted Publishing OIDC) or 'github-packages' (token push)
+        type: string
+        default: 'nuget.org'
+      pre-build-command:
+        description: Optional shell command run before Build (e.g. npm/gulp frontend asset build). No-op when empty.
+        type: string
+        default: ''
+      test-command:
+        description: Optional shell command run after Build, before Pack (e.g. dotnet test / ArchTests). No-op when empty.
+        type: string
+        default: ''
+      post-pack-command:
+        description: Optional shell command run after Pack (e.g. smoke-test against packed nupkgs). No-op when empty.
+        type: string
+        default: ''
+      pack-project-paths:
+        description: Optional newline/comma-separated list of explicit .csproj paths to pack instead of the whole solution (use when Directory.Build.props sets IsPackable=true globally, so a solution-wide pack would also try to pack test/example projects). No-op when empty.
+        type: string
+        default: ''
+    secrets:
+      gh-token:
+        description: GitHub token for pushing the version/changelog commit, tagging, creating the Release, and artifact cleanup
+        required: true
+      nuget-user:
+        description: NuGet.org profile name for Trusted Publishing OIDC login (required when publish-to-nuget is true and nuget-target is nuget.org)
+        required: false
+    outputs:
+      version:
+        description: The bumped version for this run (e.g. 1.2.3 or 1.2.3-beta.4), for callers that need to reference the version or publish packages
+        value: ${{ jobs.version.outputs.version }}
+      sha:
+        description: The commit SHA the version bump + changelog were pushed as, for callers that need to check out the exact commit
+        value: ${{ jobs.version.outputs.sha }}
+      tag:
+        description: The tag created for this run (e.g. v1.2.3 or v1.2.3-beta.4)
+        value: ${{ jobs.version.outputs.tag }}
+
+permissions:
+  contents: read
+  actions: none
+  packages: read
+
+jobs:
+  # --- 1) bump version -> generate changelog -> commit both -> tag -> push -> GitHub Release ---
+  version:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # required to push the commit, push the tag, and create the Release
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      sha: ${{ steps.committag.outputs.sha }}
+      tag: ${{ steps.committag.outputs.tag }}
+    steps:
+      - name: Validate channel input
+        shell: bash
+        run: |
+          case "${{ inputs.channel }}" in
+            beta|release) ;;
+            *) echo "::error::channel input must be 'beta' or 'release', got '${{ inputs.channel }}'"; exit 1 ;;
+          esac
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.gh-token }}
+
+      - name: Checkout workflow scripts
+        uses: actions/checkout@v7
+        with:
+          repository: KiarashMinoo/.github
+          ref: main
+          sparse-checkout: .github/scripts
+          path: .ci-scripts
+          token: ${{ secrets.gh-token }}
+
+      - name: Bump version (files only, not committed yet)
+        id: bump
+        shell: pwsh
+        run: |
+          if (Test-Path 'Directory.Build.props') {
+            pwsh ./.ci-scripts/.github/scripts/update-version.ps1 -Channel ${{ inputs.channel }} -BumpComponent ${{ inputs.bump-component }}
+          } else {
+            Write-Host 'Directory.Build.props not found, will update .csproj files directly'
+            pwsh ./.ci-scripts/.github/scripts/update-version.ps1 -Channel ${{ inputs.channel }} -BumpComponent ${{ inputs.bump-component }} -UpdateCsproj
+          }
+
+      - name: Generate changelog (since previous tag) and release notes
+        id: changelog
+        shell: pwsh
+        run: |
+          pwsh ./.ci-scripts/.github/scripts/generate-changelog.ps1 -Version "${{ steps.bump.outputs.version }}"
+
+      - name: Commit version bump + changelog, push, tag, push tag
+        id: committag
+        shell: pwsh
+        run: |
+          pwsh ./.ci-scripts/.github/scripts/commit-tag-push.ps1 -Version "${{ steps.bump.outputs.version }}"
+
+      - name: Create GitHub Release
+        if: inputs.create-github-release && steps.committag.outputs.tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          TAG="${{ steps.committag.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping (idempotent re-run)."
+          else
+            PRERELEASE_FLAG=()
+            if [ "${{ inputs.channel }}" = "beta" ]; then PRERELEASE_FLAG=(--prerelease); fi
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file release-notes.md \
+              --target "${{ steps.committag.outputs.sha }}" \
+              "${PRERELEASE_FLAG[@]}"
+          fi
+
+  # --- 2) build -> optional test -> pack matrix & upload artifacts ---
+  pack:
+    needs: version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJson(inputs.runner-os) }}
+        platform_in: ${{ fromJson(inputs.platforms) }}
+        configuration: ${{ fromJson(inputs.configurations) }}
+    steps:
+      - name: Checkout version-bump commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.version.outputs.sha }}
+
+      - name: Checkout workflow scripts
+        uses: actions/checkout@v7
+        with:
+          repository: KiarashMinoo/.github
+          ref: main
+          sparse-checkout: .github/scripts
+          path: .ci-scripts
+          token: ${{ secrets.gh-token }}
+
+      - name: Show version from checked-out ref
+        shell: pwsh
+        run: |
+          pwsh ./.ci-scripts/.github/scripts/show-version.ps1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet-versions }}
+
+      - name: Cache NuGet
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.sln', '**/*.slnx', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Generate release notes
+        shell: pwsh
+        run: |
+          pwsh ./.ci-scripts/.github/scripts/generate-release-notes.ps1 `
+            -Before "${{ github.event.before }}" `
+            -After "${{ github.sha }}" `
+            -SetGitHubEnv
+
+      - name: Run pre-build command
+        if: inputs.pre-build-command != ''
+        shell: bash
+        run: ${{ inputs.pre-build-command }}
+
+      - name: Build
+        id: build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          $solutionPath = "${{ inputs.solution-path }}"
+          if (-not [System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($solutionPath) -and -not (Test-Path $solutionPath)) {
+            Write-Host "Provided solution path '$solutionPath' not found. Falling back to '**/*.sln*'."
+            $solutionPath = '**/*.sln*'
+          }
+          $params = @{
+            Configuration = "${{ matrix.configuration }}"
+            Platform = "${{ matrix.platform_in }}"
+            SolutionPath = $solutionPath
+            SkipPack = $true
+          }
+          pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 @params
+
+      - name: Run tests
+        if: inputs.test-command != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: ${{ inputs.test-command }}
+
+      - name: Pack
+        id: pack
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          $releaseNotes = if ($env:REL_NOTES) { $env:REL_NOTES } else { "" }
+          $solutionPath = "${{ inputs.solution-path }}"
+          if (-not [System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($solutionPath) -and -not (Test-Path $solutionPath)) {
+            Write-Host "Provided solution path '$solutionPath' not found. Falling back to '**/*.sln*'."
+            $solutionPath = '**/*.sln*'
+          }
+          $params = @{
+            Configuration = "${{ matrix.configuration }}"
+            Platform = "${{ matrix.platform_in }}"
+            SolutionPath = $solutionPath
+            SkipClean = $true
+            SkipRestore = $true
+            SkipBuild = $true
+            ReleaseNotes = $releaseNotes
+          }
+          $projectPaths = "${{ inputs.pack-project-paths }}"
+          if (-not [string]::IsNullOrWhiteSpace($projectPaths)) {
+            $params.ProjectPaths = $projectPaths
+          }
+          pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 @params
+
+      - name: Run post-pack command
+        if: inputs.post-pack-command != ''
+        shell: bash
+        run: ${{ inputs.post-pack-command }}
+
+      - name: Upload packages artifact (unique per leg)
+        uses: actions/upload-artifact@v7
+        with:
+          name: pkg-${{ matrix.configuration }}${{ steps.pack.outputs.artifact_suffix }}
+          path: artifacts/pkg/*.nupkg
+          if-no-files-found: error
+
+      - name: Upload symbols (optional, unique per leg)
+        if: ${{ hashFiles('artifacts/pkg/*.snupkg') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: symbols-${{ matrix.configuration }}${{ steps.pack.outputs.artifact_suffix }}
+          path: artifacts/pkg/*.snupkg
+          if-no-files-found: ignore
+
+  # --- 3) publish packages ---
+  # SECURITY NOTE: nuget.org Trusted Publishing validates the exact repo AND
+  # workflow file path that executes the `NuGet/login` step, via the
+  # `job_workflow_ref` claim on the OIDC token. That means the trust policy for
+  # any package published from here (when nuget-target is nuget.org) must point
+  # at: KiarashMinoo/.github/.github/workflows/reusable-ci.yml@main -- this
+  # single file now covers what used to be two separate trust policy entries
+  # (reusable-beta-ci.yml and reusable-release-ci.yml), since both channels are
+  # handled by this one workflow file.
+  publish-nuget:
+    name: Publish packages (${{ inputs.channel }})
+    needs: [version, pack]
+    if: inputs.publish-to-nuget
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # required for Trusted Publishing OIDC (nuget-target: nuget.org)
+      packages: write # required for GitHub Packages (nuget-target: github-packages)
+    steps:
+      - name: Checkout version-bump commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+
+      - name: Download all packages artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: pkg-*
+          path: ./dist/packages
+          merge-multiple: true
+
+      - name: Download all symbols artifacts (optional)
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: symbols-*
+          path: ./dist/symbols
+          merge-multiple: true
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: NuGet login (OIDC to temp API key — Trusted Publishing)
+        if: inputs.nuget-target == 'nuget.org'
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.nuget-user }}
+
+      - name: Publish packages to NuGet.org
+        if: inputs.nuget-target == 'nuget.org'
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          shopt -s nullglob
+          for package in ./dist/packages/*.nupkg; do
+            dotnet nuget push "$package" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done
+          for symbols in ./dist/symbols/*.snupkg; do
+            dotnet nuget push "$symbols" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done
+
+      - name: Publish packages to GitHub Packages
+        if: inputs.nuget-target == 'github-packages'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          shopt -s nullglob
+          dotnet nuget add source --username github --password "$GH_TOKEN" --store-password-in-clear-text --name github-packages "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
+          for package in ./dist/packages/*.nupkg; do
+            dotnet nuget push "$package" --api-key "$GH_TOKEN" --source github-packages --skip-duplicate
+          done
+          for symbols in ./dist/symbols/*.snupkg; do
+            dotnet nuget push "$symbols" --api-key "$GH_TOKEN" --source github-packages --skip-duplicate
+          done
+
+  cleanup-nuget-artifacts:
+    name: Delete run artifacts
+    needs: publish-nuget
+    if: always() && inputs.publish-to-nuget && inputs.cleanup-artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Delete ALL run artifacts
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
+            --paginate --jq '.artifacts[].id' | while read -r id; do
+              gh api repos/${{ github.repository }}/actions/artifacts/$id -X DELETE
+            done

@@ -1,5 +1,3 @@
-name: DEPRECATED - Reusable Cleanup Artifacts (unused, do not call)
-
 # DEPRECATED — DO NOT USE.
 #
 # This reusable workflow is no longer called by anything. Artifact cleanup is now
@@ -20,6 +18,9 @@ name: DEPRECATED - Reusable Cleanup Artifacts (unused, do not call)
 # to have both `on:` and `jobs:`, even ones nothing should use). The single job below
 # is an intentional no-op. Safe to delete this file entirely whenever convenient
 # (git rm .github/workflows/reusable-cleanup-artifacts.yml).
+
+name: DEPRECATED - Reusable Cleanup Artifacts (unused, do not call)
+
 on:
   workflow_dispatch: {}
 

@@ -4,32 +4,47 @@
 
 .DESCRIPTION
   PowerShell 5.1 compatible helper used by GitHub Actions to increment version:
-   - beta channel: 
-     * First beta after release: bump patch (1.1.1 -> 1.1.2-beta.1)
+   - beta channel:
+     * First beta after release: bump -BumpComponent (default major) and add
+       -beta.1 (e.g. major: 1.1.1 -> 2.0.0-beta.1; minor: 1.1.1 -> 1.2.0-beta.1;
+       patch: 1.1.1 -> 1.1.2-beta.1)
      * Subsequent betas: increment beta.N (1.1.2-beta.1 -> 1.1.2-beta.2)
    - release channel:
-     * From a prerelease (e.g. 1.1.2-beta.5): strip the suffix only (patch was
-       already bumped when the beta cycle started) -> 1.1.2
+     * From a prerelease (e.g. 1.1.2-beta.5): strip the suffix only (the
+       component was already bumped when the beta cycle started) -> 1.1.2
      * From a plain version with no prerelease (release-only flow, no beta
-       stage, e.g. IIIF): bump the patch directly -> 1.1.2 -> 1.1.3
+       stage, e.g. IIIF): bump -BumpComponent directly (e.g. minor: 1.1.2 -> 1.2.0)
    - SetVersion: Set version to a specific value (used for syncing branches)
-  
-  Returns outputs via GITHUB_OUTPUT: version=<new-version>
+
+  -BumpComponent controls which part of the version gets incremented in the "starting
+  fresh from a version with no prerelease suffix" case above (default 'major', matching
+  the original protocol of bumping major once per beta cycle / release-only push).
+  Pass -BumpComponent minor for repos that should grow the minor version and keep major
+  fixed instead (e.g. IIIF). 'patch' keeps the original pre-this-flag behavior. Bumping
+  major or minor resets the lower component(s) to 0, per normal SemVer convention.
+
+  Returns outputs via GITHUB_OUTPUT: version=<new-version>, and when -CommitAndTag is
+  used, sha=<commit-sha> of the version-bump commit (so callers can check out the
+  exact commit instead of relying on a tag/branch ref).
 
   Usage examples:
     pwsh .github/scripts/update-version.ps1 -Channel beta
+    pwsh .github/scripts/update-version.ps1 -Channel beta -BumpComponent minor
     pwsh .github/scripts/update-version.ps1 -Channel release
     pwsh .github/scripts/update-version.ps1 -SetVersion 1.2.3
+    pwsh .github/scripts/update-version.ps1 -Channel release -CommitAndTag -SkipTag   # commit+push only, no git tag
 #>
 param(
     [ValidateSet('release', 'beta', '')][string]$Channel = '',
     [string]$SetVersion = '',
-    [string]$PropsPath = 'Directory.Build.props', 
-    [switch]$CommitAndTag, 
+    [string]$PropsPath = 'Directory.Build.props',
+    [switch]$CommitAndTag,
+    [switch]$SkipTag,
     [string]$CommitMessage = 'chore: bump version to {VERSION} [skip ci]',
-    [string]$TagPrefix = 'v', 
+    [string]$TagPrefix = 'v',
     [string]$TagMessage = 'Release {TAG}',
-    [switch]$UpdateCsproj
+    [switch]$UpdateCsproj,
+    [ValidateSet('major', 'minor', 'patch')][string]$BumpComponent = 'major'
 )
 
 # Validate parameters
@@ -168,15 +183,19 @@ else {
 }
 
 if ($hasChannel -and $Channel -eq 'beta') {
-    # Beta channel: bump patch if no prerelease, otherwise increment beta.N
+    # Beta channel: bump -BumpComponent if no prerelease, otherwise increment beta.N
     if (-not $pre) {
-        # First beta after stable release: bump patch and add -beta.1
-        $bld += 1
+        # First beta after stable release: bump the configured component and add -beta.1
+        switch ($BumpComponent) {
+            'major' { $maj += 1; $min = 0; $bld = 0 }
+            'minor' { $min += 1; $bld = 0 }
+            default { $bld += 1 } # patch
+        }
         $rev = if ($format -eq '4') {
-            0 
+            0
         }
         else {
-            $null 
+            $null
         }
         $pre = "beta.1"
     }
@@ -210,10 +229,16 @@ elseif ($hasChannel -and $Channel -eq 'release') {
     # Release channel: if coming from a prerelease (e.g. 1.1.2-beta.5), just strip the
     # suffix — the patch was already bumped when the beta cycle started. If there's no
     # prerelease suffix at all, this is a release-only flow with no preceding beta stage
-    # (e.g. IIIF), so bump the patch directly instead of re-tagging the same version.
+    # (e.g. IIIF), so bump the configured component directly instead of re-tagging the
+    # same version.
     if (-not $pre) {
-        $bld += 1
-        Write-Host "No prerelease suffix on current version -- release-only flow, bumping patch" -ForegroundColor Yellow
+        switch ($BumpComponent) {
+            'major' { $maj += 1; $min = 0; $bld = 0 }
+            'minor' { $min += 1; $bld = 0 }
+            default { $bld += 1 } # patch
+        }
+        if ($format -eq '4') { $rev = 0 }
+        Write-Host "No prerelease suffix on current version -- release-only flow, bumping $BumpComponent" -ForegroundColor Yellow
     }
     if ($format -eq '4') {
         $newVersion = "{0}.{1}.{2}.{3}" -f $maj, $min, $bld, $rev
@@ -257,7 +282,7 @@ else {
 Write-Host ('Version updated successfully to ' + $newVersion)
 
 if ($CommitAndTag) {
-    Write-Host "`n--- Commit & Tag (requested) ---" -ForegroundColor Yellow
+    Write-Host "`n--- Commit (and tag, unless -SkipTag) ---" -ForegroundColor Yellow
 
     # Configure git user (same as workflows)
     & git config user.name "github-actions[bot]" 2>$null
@@ -282,30 +307,49 @@ if ($CommitAndTag) {
             Write-Warning "git commit failed (exit $LASTEXITCODE)"
         }
         else {
-            Write-Host "Pushing commit..."
+            Write-Host "Pushing commit to current branch..."
             & git push
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "git push failed (exit $LASTEXITCODE)"
+            }
         }
 
-        # Tag
-        $tag = "$TagPrefix$newVersion"
-        # detect if tag exists (git rev-parse exits non-zero when missing)
-        $null = & git rev-parse "$tag" 2>$null
-        $tagExists = ($LASTEXITCODE -eq 0)
-        if ($tagExists) {
-            Write-Host "Tag $tag already exists; skipping." -ForegroundColor Gray
-        }
-        else {
-            $tagMsg = $TagMessage -replace '\{TAG\}', $tag -replace '\{VERSION\}', $newVersion
-            Write-Host "Creating tag $tag"
-            & git tag -a "$tag" -m "$tagMsg"
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warning "git tag failed (exit $LASTEXITCODE)"
+        if (-not $SkipTag) {
+            # Tag
+            $tag = "$TagPrefix$newVersion"
+            # detect if tag exists (git rev-parse exits non-zero when missing)
+            $null = & git rev-parse "$tag" 2>$null
+            $tagExists = ($LASTEXITCODE -eq 0)
+            if ($tagExists) {
+                Write-Host "Tag $tag already exists; skipping." -ForegroundColor Gray
             }
             else {
-                Write-Host "Pushing tag $tag..."
-                & git push origin "$tag"
+                $tagMsg = $TagMessage -replace '\{TAG\}', $tag -replace '\{VERSION\}', $newVersion
+                Write-Host "Creating tag $tag"
+                & git tag -a "$tag" -m "$tagMsg"
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "git tag failed (exit $LASTEXITCODE)"
+                }
+                else {
+                    Write-Host "Pushing tag $tag..."
+                    & git push origin "$tag"
+                }
             }
         }
+        else {
+            Write-Host "Skipping tag creation (-SkipTag)." -ForegroundColor Gray
+        }
+    }
+
+    # Always report the current HEAD commit SHA, whether or not there were changes to
+    # commit (e.g. a re-run where the version was already bumped) -- callers use this to
+    # check out the exact commit instead of relying on a tag or the moving branch tip.
+    $headSha = (& git rev-parse HEAD).Trim()
+    if ($env:GITHUB_OUTPUT) {
+        Add-Content -Path $env:GITHUB_OUTPUT -Value "sha=$headSha"
+    }
+    else {
+        Write-Host "sha=$headSha"
     }
 }
 
