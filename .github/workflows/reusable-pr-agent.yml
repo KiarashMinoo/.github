@@ -21,15 +21,26 @@ permissions:
   issues: write
 
 concurrency:
-  group: pr-agent-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  # Free-provider quotas are shared by every PR in this repository. Run only
+  # one review at a time so separate PRs cannot create a request burst.
+  group: pr-agent-quota-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
   pr-agent:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
+      - name: Stagger provider requests
+        shell: bash
+        run: |
+          # Spread queued workflow starts over a small window. This reduces
+          # transient 429s when several repositories share the same API key.
+          delay=$((20 + RANDOM % 41))
+          echo "Waiting ${delay}s before contacting model providers."
+          sleep "$delay"
+
       - name: PR Agent Review
         uses: The-PR-Agent/pr-agent@v0.39.0
 
@@ -63,6 +74,7 @@ jobs:
           # =====================================================
           CONFIG.FALLBACK_MODELS: >
             [
+              "nvidia_nim/meta/llama-3.2-1b-instruct",
               "openrouter/meta-llama/llama-3.2-3b-instruct:free",
               "openrouter/liquid/lfm-2.5-1.2b-instruct:free",
               "openrouter/nvidia/nemotron-nano-9b-v2:free",
@@ -71,7 +83,6 @@ jobs:
               "openrouter/qwen/qwen3-coder:free",
               "openrouter/meta-llama/llama-3.3-70b-instruct:free",
               "openrouter/openai/gpt-oss-120b:free",
-              "nvidia_nim/meta/llama-3.2-1b-instruct",
               "nvidia_nim/meta/llama-3.2-3b-instruct",
               "nvidia_nim/nvidia/nemotron-mini-4b-instruct",
               "nvidia_nim/microsoft/phi-4-mini-instruct",
@@ -87,13 +98,16 @@ jobs:
 
           # =====================================================
           # LiteLLM Reliability
-          # Low retry/wait so a stuck free model fails over fast instead
-          # of burning the job timeout on retries.
+          # PR-Agent v0.39 sends 429s and quota-related 403s directly to the
+          # fallback list. Put a different provider first so a provider-wide
+          # quota failure does not hammer every model on the same endpoint.
           # =====================================================
           LITELLM.DROP_PARAMS: "true"
-          LITELLM.RETRY: "1"
-          LITELLM.RETRY_WAIT: "2"
-          LITELLM.TIMEOUT: "20"
+          CONFIG.AI_TIMEOUT: "30"
+
+          # Retry GitHub API secondary-rate-limit responses independently of
+          # model-provider failover.
+          GITHUB.RATELIMIT_RETRIES: "5"
 
           # =====================================================
           # Speed Optimizations
