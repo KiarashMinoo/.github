@@ -418,6 +418,43 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      # NuGet feeds occasionally answer a good push with a transient 403 (auth/permission
+      # propagation lag right after a key/OIDC token is issued) or 429 (per-key/per-IP rate
+      # limit) -- both clear up on their own within seconds to a couple of minutes. Retrying
+      # any other failure (bad package, 400, real 401/403 auth failure, etc.) would just waste
+      # 5 attempts on something that will never succeed, so only these two codes trigger a
+      # retry; everything else fails the step immediately, same as before.
+      - name: Prepare NuGet push retry helper
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/push-with-retry.sh" <<'EOF'
+          push_with_retry() {
+            local file="$1" source_arg="$2" api_key="$3"
+            local max_attempts=5 attempt=1 delay=5
+            while true; do
+              local output
+              output=$(dotnet nuget push "$file" --api-key "$api_key" --source "$source_arg" --skip-duplicate 2>&1)
+              local status=$?
+              echo "$output"
+              if [ $status -eq 0 ]; then
+                return 0
+              fi
+              if echo "$output" | grep -qE 'indicate success: (403|429)'; then
+                if [ $attempt -ge $max_attempts ]; then
+                  echo "::error::Exhausted $max_attempts attempts pushing $(basename "$file") (403/429)"
+                  return 1
+                fi
+                echo "::warning::Transient 403/429 pushing $(basename "$file") (attempt $attempt/$max_attempts) — retrying in ${delay}s"
+                sleep $delay
+                delay=$((delay * 2))
+                attempt=$((attempt + 1))
+                continue
+              fi
+              return $status
+            done
+          }
+          EOF
+
       - name: NuGet login (OIDC to temp API key — Trusted Publishing)
         if: inputs.nuget-target == 'nuget.org' && inputs.nuget-auth-mode == 'oidc'
         id: login
@@ -431,12 +468,13 @@ jobs:
         env:
           NUGET_API_KEY: ${{ secrets.nuget-api-key }}
         run: |
+          source "$RUNNER_TEMP/push-with-retry.sh"
           shopt -s nullglob
           for package in ./dist/packages/*.nupkg; do
-            dotnet nuget push "$package" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+            push_with_retry "$package" https://api.nuget.org/v3/index.json "$NUGET_API_KEY" || exit 1
           done
           for symbols in ./dist/symbols/*.snupkg; do
-            dotnet nuget push "$symbols" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+            push_with_retry "$symbols" https://api.nuget.org/v3/index.json "$NUGET_API_KEY" || exit 1
           done
 
       - name: Publish packages to NuGet.org (OIDC Trusted Publishing)
@@ -445,12 +483,13 @@ jobs:
         env:
           NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
         run: |
+          source "$RUNNER_TEMP/push-with-retry.sh"
           shopt -s nullglob
           for package in ./dist/packages/*.nupkg; do
-            dotnet nuget push "$package" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+            push_with_retry "$package" https://api.nuget.org/v3/index.json "$NUGET_API_KEY" || exit 1
           done
           for symbols in ./dist/symbols/*.snupkg; do
-            dotnet nuget push "$symbols" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+            push_with_retry "$symbols" https://api.nuget.org/v3/index.json "$NUGET_API_KEY" || exit 1
           done
 
       - name: Publish packages to GitHub Packages
@@ -459,13 +498,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.gh-token }}
         run: |
+          source "$RUNNER_TEMP/push-with-retry.sh"
           shopt -s nullglob
           dotnet nuget add source --username github --password "$GH_TOKEN" --store-password-in-clear-text --name github-packages "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
           for package in ./dist/packages/*.nupkg; do
-            dotnet nuget push "$package" --api-key "$GH_TOKEN" --source github-packages --skip-duplicate
+            push_with_retry "$package" github-packages "$GH_TOKEN" || exit 1
           done
           for symbols in ./dist/symbols/*.snupkg; do
-            dotnet nuget push "$symbols" --api-key "$GH_TOKEN" --source github-packages --skip-duplicate
+            push_with_retry "$symbols" github-packages "$GH_TOKEN" || exit 1
           done
 
   cleanup-nuget-artifacts:
