@@ -316,7 +316,22 @@ jobs:
             SolutionPath = $solutionPath
             SkipPack = $true
           }
-          pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 @params
+          # Restore/build occasionally trips over transient issues (NuGet feed timeouts,
+          # DNS blips, a runner-side hiccup) that have nothing to do with the code -- retry
+          # a few times with backoff before failing this matrix leg outright, so one flaky
+          # network moment doesn't force a manual re-run of the whole job.
+          $maxAttempts = 3
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 @params
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($attempt -ge $maxAttempts) {
+              Write-Host "::error::Build failed after $maxAttempts attempts (exit $LASTEXITCODE)."
+              exit $LASTEXITCODE
+            }
+            $delay = 15 * $attempt
+            Write-Host "::warning::Build attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) — retrying in ${delay}s"
+            Start-Sleep -Seconds $delay
+          }
 
       - name: Run tests
         if: inputs.test-command != ''
@@ -350,7 +365,20 @@ jobs:
           if (-not [string]::IsNullOrWhiteSpace($projectPaths)) {
             $params.ProjectPaths = $projectPaths
           }
-          pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 @params
+          # Same rationale as the Build step above: retry transient failures a few times
+          # with backoff before giving up on this matrix leg.
+          $maxAttempts = 3
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 @params
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($attempt -ge $maxAttempts) {
+              Write-Host "::error::Pack failed after $maxAttempts attempts (exit $LASTEXITCODE)."
+              exit $LASTEXITCODE
+            }
+            $delay = 15 * $attempt
+            Write-Host "::warning::Pack attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) — retrying in ${delay}s"
+            Start-Sleep -Seconds $delay
+          }
 
       - name: Run post-pack command
         if: inputs.post-pack-command != ''
@@ -363,6 +391,11 @@ jobs:
           name: pkg-${{ matrix.configuration }}${{ steps.pack.outputs.artifact_suffix }}
           path: artifacts/pkg/*.nupkg
           if-no-files-found: error
+          # Safety net, independent of cleanup-nuget-artifacts below: these expire on
+          # their own after 1 day even if that job never runs (workflow cancelled, repo
+          # settings prevent it, etc.), so a stalled/partially-failed run can't pin these
+          # down indefinitely.
+          retention-days: 1
 
       - name: Upload symbols (optional, unique per leg)
         if: ${{ hashFiles('artifacts/pkg/*.snupkg') != '' }}
@@ -371,6 +404,7 @@ jobs:
           name: symbols-${{ matrix.configuration }}${{ steps.pack.outputs.artifact_suffix }}
           path: artifacts/pkg/*.snupkg
           if-no-files-found: ignore
+          retention-days: 1
 
   # --- 3) publish packages ---
   # nuget.org auth (see nuget-auth-mode input): 'classic' (default) pushes with a plain
@@ -511,7 +545,16 @@ jobs:
   cleanup-nuget-artifacts:
     name: Delete run artifacts
     needs: publish-nuget
-    if: always() && inputs.publish-to-nuget && inputs.cleanup-artifacts
+    # `always()` here used to mean this ran (and deleted every artifact from the run)
+    # even when a matrix leg in `pack` failed and publish-nuget was therefore skipped --
+    # wiping out the packages from legs that DID succeed. If you then re-ran only the
+    # failed leg, publish-nuget would find nothing left to push for the legs that had
+    # already succeeded, only the newly-retried one. Gating on
+    # needs.publish-nuget.result == 'success' means artifacts are only ever deleted once
+    # everything has actually been published; on a partial failure they're left alone
+    # (see retention-days: 1 on the upload steps above for the fallback expiry) so a
+    # "re-run failed jobs" retry can still find and push everything together.
+    if: inputs.publish-to-nuget && inputs.cleanup-artifacts && needs.publish-nuget.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

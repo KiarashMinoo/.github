@@ -106,22 +106,41 @@ if (-not $SkipTag) {
     $null = & git rev-parse "$candidateTag" 2>$null
     $tagExists = ($LASTEXITCODE -eq 0)
     if ($tagExists) {
-        Write-Host "Tag $candidateTag already exists; skipping tag creation." -ForegroundColor Gray
+        Write-Host "Tag $candidateTag already exists locally; skipping tag creation." -ForegroundColor Gray
         $tag = $candidateTag
     }
     else {
         $tagMsg = $TagMessage -replace '\{TAG\}', $candidateTag -replace '\{VERSION\}', $Version
         Write-Host "Creating tag $candidateTag"
-        & git tag -a "$candidateTag" -m "$tagMsg"
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "git tag failed (exit $LASTEXITCODE)"
-            exit 1
+        # Both `git tag` and `git push origin <tag>` can fail with an "already exists"
+        # error even after the local rev-parse check above says the tag is missing --
+        # e.g. a re-run whose local checkout is missing a tag that another run already
+        # pushed to the remote in the meantime. Rather than hard-failing the whole run
+        # over a tag that, for all practical purposes, already exists where it needs to
+        # (the remote), pattern-match the git output for "already exists" and treat that
+        # specific case as success and move on; any other failure still fails the run.
+        $tagCreateOutput = & git tag -a "$candidateTag" -m "$tagMsg" 2>&1
+        $tagCreateExit = $LASTEXITCODE
+        if ($tagCreateExit -ne 0) {
+            if ($tagCreateOutput -match 'already exists') {
+                Write-Host "Tag $candidateTag already exists (created by another run); continuing." -ForegroundColor Gray
+            }
+            else {
+                Write-Error "git tag failed (exit $tagCreateExit): $tagCreateOutput"
+                exit 1
+            }
         }
         Write-Host "Pushing tag $candidateTag..."
-        & git push origin "$candidateTag"
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "git push tag failed (exit $LASTEXITCODE)"
-            exit 1
+        $tagPushOutput = & git push origin "$candidateTag" 2>&1
+        $tagPushExit = $LASTEXITCODE
+        if ($tagPushExit -ne 0) {
+            if ($tagPushOutput -match 'already exists') {
+                Write-Host "Tag $candidateTag already exists on the remote; treating as success (idempotent re-run)." -ForegroundColor Gray
+            }
+            else {
+                Write-Error "git push tag failed (exit $tagPushExit): $tagPushOutput"
+                exit 1
+            }
         }
         $tag = $candidateTag
     }
