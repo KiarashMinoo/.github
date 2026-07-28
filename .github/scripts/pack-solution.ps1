@@ -266,13 +266,22 @@ if (-not $SkipRestore) {
 # Build
 if (-not $SkipBuild) {
   Write-Host "`n--- Build ---" -ForegroundColor Yellow
+  # Deliberately NOT --no-restore: on a cold checkout (or right after `dotnet clean`,
+  # which also purges ThunderPropagator's downloaded .shared-props/ cache), the
+  # preceding Restore step evaluates the project before its own shared-props download
+  # target has run, so PackageReference items contributed by the shared props chain
+  # aren't part of that evaluation and never make it into project.assets.json. By the
+  # time Build runs, the shared props ARE on disk and DO contribute those references --
+  # but with --no-restore, Build has no chance to resolve them, so it fails with
+  # CS0234/CS0246 for every package the shared chain adds. Letting Build restore again
+  # here is cheap (everything's already cached from the prior Restore step) and closes
+  # that gap.
   dotnet build $SolutionPath --nologo `
     -c $Configuration `
     -m:1 `
     -p:Platform="$platformSol" `
     -p:BuildInParallel=false `
-    -p:ContinuousIntegrationBuild=true `
-    --no-restore
+    -p:ContinuousIntegrationBuild=true
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE 
   }
