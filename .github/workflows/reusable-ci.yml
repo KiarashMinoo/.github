@@ -471,7 +471,31 @@ jobs:
               local status=$?
               echo "$output"
               if [ $status -eq 0 ]; then
+                # Pace successful pushes: this loop can push 100+ packages back-to-back in
+                # well under a second apart, which is exactly what tripped nuget.org's push
+                # quota (see the "Quota Exceeded" handling below) even though every individual
+                # push succeeded. A short, fixed sleep here spreads the whole run out in
+                # exchange for a real chance of not hitting that quota at all -- cheap
+                # insurance against a much more expensive full-job failure.
+                sleep 0.5
                 return 0
+              fi
+              # A 403 carrying "Quota Exceeded" is NuGet.org's push-rate quota, not the brief
+              # auth/permission-propagation lag this retry loop was designed for: NuGet's own
+              # "retry after" on this response is measured in tens of minutes, not seconds, so
+              # burning all 5 attempts across ~75s of backoff can never succeed -- it only
+              # wastes CI time before failing anyway. Fail fast instead, with a clear,
+              # actionable message. --skip-duplicate above means a later re-run of this same
+              # job harmlessly skips everything already pushed and resumes from here.
+              if echo "$output" | grep -qi 'Quota Exceeded'; then
+                local retry_after wait_msg
+                retry_after=$(echo "$output" | grep -oE 'retry after: [0-9]+s' | grep -oE '[0-9]+' | head -1)
+                wait_msg="a while"
+                if [ -n "$retry_after" ]; then
+                  wait_msg="~$((retry_after / 60)) minute(s)"
+                fi
+                echo "::error::NuGet.org push quota exceeded for $(basename "$file") -- wait $wait_msg and re-run this job (already-pushed packages are skipped via --skip-duplicate)."
+                return 1
               fi
               if echo "$output" | grep -qE 'indicate success: (403|429)'; then
                 if [ $attempt -ge $max_attempts ]; then
