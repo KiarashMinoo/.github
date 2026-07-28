@@ -114,6 +114,18 @@ on:
         description: Optional newline/comma-separated list of explicit .csproj paths to pack instead of the whole solution (use when Directory.Build.props sets IsPackable=true globally, so a solution-wide pack would also try to pack test/example projects). No-op when empty.
         type: string
         default: ''
+      nuget-api-key-2-prefix:
+        description: >
+          Package filename prefix (a plain string match, e.g. 'ThunderPropagator.Feeders') routed
+          to secrets.nuget-api-key-2 instead of the default secrets.nuget-api-key, for classic
+          nuget.org publishing only. Left empty (the default), routing is disabled and every
+          package uses secrets.nuget-api-key as before.
+        type: string
+        default: ''
+      nuget-api-key-3-prefix:
+        description: Same as nuget-api-key-2-prefix, routed to secrets.nuget-api-key-3. Left empty (the default), routing is disabled.
+        type: string
+        default: ''
     secrets:
       gh-token:
         description: GitHub token for pushing the version/changelog commit, tagging, creating the Release, and artifact cleanup
@@ -134,7 +146,22 @@ on:
           automated commit push through as that account instead.
         required: false
       nuget-api-key:
-        description: Classic NuGet.org API key (nuget.org > API Keys), used when nuget-target is nuget.org and nuget-auth-mode is 'classic' (the default).
+        description: >
+          Classic NuGet.org API key (nuget.org > API Keys), used when nuget-target is nuget.org
+          and nuget-auth-mode is 'classic' (the default). Also the fallback/default key for any
+          package whose filename doesn't match nuget-api-key-2-prefix or nuget-api-key-3-prefix
+          below, when those are set.
+        required: false
+      nuget-api-key-2:
+        description: >
+          Optional second classic NuGet.org API key, used only for packages whose filename
+          starts with nuget-api-key-2-prefix -- lets a repo that publishes several distinct
+          package-ID families (e.g. one owner-scoped key per family) split its push volume
+          across independent 350/hour-per-key quota buckets instead of sharing one. Ignored
+          entirely when nuget-api-key-2-prefix is left empty.
+        required: false
+      nuget-api-key-3:
+        description: Same as nuget-api-key-2, but paired with nuget-api-key-3-prefix. Ignored entirely when nuget-api-key-3-prefix is left empty.
         required: false
       nuget-user:
         description: NuGet.org profile name for Trusted Publishing OIDC login, used only when nuget-target is nuget.org and nuget-auth-mode is 'oidc'. See that input's description for why OIDC doesn't currently work from here.
@@ -511,6 +538,31 @@ jobs:
               return $status
             done
           }
+
+          # Package-family key routing (classic nuget.org publish only): picks
+          # NUGET_API_KEY_2/_3 over the default NUGET_API_KEY when the package's filename
+          # starts with the corresponding NUGET_API_KEY_2/_3_PREFIX env var, so a repo that
+          # publishes several distinct package-ID families can spread pushes across several
+          # independent 350/hour-per-key nuget.org quota buckets instead of exhausting one
+          # shared key. NuGet's own pack output names files "{PackageId}.{Version}.{ext}", and
+          # a plain startswith check against the pre-version portion is unambiguous here even
+          # though PackageId/Version can each contain dots -- the prefixes in play (e.g.
+          # "ThunderPropagator.Feeders" vs "ThunderPropagator.Providers" vs
+          # "ThunderPropagator.Feeviders") never share a common leading substring with one
+          # another, so there's no risk of one prefix accidentally matching another family.
+          # A _PREFIX left empty disables that slot entirely -- everything then falls through
+          # to the default key, exactly as before this routing existed.
+          select_api_key() {
+            local filename
+            filename="$(basename "$1")"
+            if [ -n "${NUGET_API_KEY_2_PREFIX:-}" ] && [[ "$filename" == "$NUGET_API_KEY_2_PREFIX"* ]]; then
+              echo "$NUGET_API_KEY_2"
+            elif [ -n "${NUGET_API_KEY_3_PREFIX:-}" ] && [[ "$filename" == "$NUGET_API_KEY_3_PREFIX"* ]]; then
+              echo "$NUGET_API_KEY_3"
+            else
+              echo "$NUGET_API_KEY"
+            fi
+          }
           EOF
 
       - name: NuGet login (OIDC to temp API key — Trusted Publishing)
@@ -525,14 +577,18 @@ jobs:
         shell: bash
         env:
           NUGET_API_KEY: ${{ secrets.nuget-api-key }}
+          NUGET_API_KEY_2: ${{ secrets.nuget-api-key-2 }}
+          NUGET_API_KEY_3: ${{ secrets.nuget-api-key-3 }}
+          NUGET_API_KEY_2_PREFIX: ${{ inputs.nuget-api-key-2-prefix }}
+          NUGET_API_KEY_3_PREFIX: ${{ inputs.nuget-api-key-3-prefix }}
         run: |
           source "$RUNNER_TEMP/push-with-retry.sh"
           shopt -s nullglob
           for package in ./dist/packages/*.nupkg; do
-            push_with_retry "$package" https://api.nuget.org/v3/index.json "$NUGET_API_KEY" || exit 1
+            push_with_retry "$package" https://api.nuget.org/v3/index.json "$(select_api_key "$package")" || exit 1
           done
           for symbols in ./dist/symbols/*.snupkg; do
-            push_with_retry "$symbols" https://api.nuget.org/v3/index.json "$NUGET_API_KEY" || exit 1
+            push_with_retry "$symbols" https://api.nuget.org/v3/index.json "$(select_api_key "$symbols")" || exit 1
           done
 
       - name: Publish packages to NuGet.org (OIDC Trusted Publishing)
