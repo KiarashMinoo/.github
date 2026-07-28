@@ -257,15 +257,28 @@ if (-not $SkipClean) {
 # Restore
 if (-not $SkipRestore) {
   Write-Host "`n--- Restore ---" -ForegroundColor Yellow
+  # Clean, Restore and Build below all run as separate `dotnet` invocations, but the .NET SDK
+  # keeps a persistent MSBuild/VBCSCompiler server warm across them by default. If Clean deleted
+  # files that a consumer's own Directory.Build.props/SharedProps-style targets manage (e.g. a
+  # BeforeTargets="Restore" step that downloads shared config into a gitignored scratch folder),
+  # that warm server can serve THIS Restore call a stale "nothing to restore" evaluation from
+  # before those targets had anything to fetch -- silently skipping them and leaving Build to fail
+  # on missing package/property state that never actually gets (re)downloaded. Shutting the server
+  # down immediately before Restore forces a cold, disk-accurate evaluation.
+  dotnet build-server shutdown
   dotnet restore $SolutionPath --nologo --disable-parallel -p:Platform="$platformSol"
   if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE 
+    exit $LASTEXITCODE
   }
 }
 
 # Build
 if (-not $SkipBuild) {
   Write-Host "`n--- Build ---" -ForegroundColor Yellow
+  # Same reasoning as before Restore above: force Build to re-evaluate from disk rather than
+  # risk reusing a warm server's cached view of the project from before Restore's own targets
+  # (e.g. a shared-config download) finished writing their output.
+  dotnet build-server shutdown
   dotnet build $SolutionPath --nologo `
     -c $Configuration `
     -m:1 `
@@ -274,7 +287,7 @@ if (-not $SkipBuild) {
     -p:ContinuousIntegrationBuild=true `
     --no-restore
   if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE 
+    exit $LASTEXITCODE
   }
 }
 
