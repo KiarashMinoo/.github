@@ -1,4 +1,4 @@
-name: Reusable â CI (beta + release, unified)
+name: Reusable Ã¢ÂÂ CI (beta + release, unified)
 
 # Single reusable workflow for both channels (replaces reusable-beta-ci.yml and
 # reusable-release-ci.yml, now deprecated stubs). Flow, per the executing branch:
@@ -261,10 +261,11 @@ jobs:
           else
             PRERELEASE_FLAG=()
             if [ "${{ inputs.channel }}" = "beta" ]; then PRERELEASE_FLAG=(--prerelease); fi
-            # Truncate release notes to GitHub's 125 000-char API limit
+            # Truncate release-notes.md to stay under GitHub's 125k-char API limit
             MAX=124900
             if [ "$(wc -c < release-notes.md)" -gt "$MAX" ]; then
-              { head -c $MAX release-notes.md; printf '\n\n_Release notes truncated — see [CHANGELOG.md](CHANGELOG.md) for the full history._'; } > /tmp/rn-trunc.md
+              head -c $MAX release-notes.md > /tmp/rn-trunc.md
+              printf '\n\n_Release notes truncated. See CHANGELOG.md for full history._\n' >> /tmp/rn-trunc.md
               mv /tmp/rn-trunc.md release-notes.md
             fi
             gh release create "$TAG" \
@@ -362,7 +363,7 @@ jobs:
               exit $LASTEXITCODE
             }
             $delay = 15 * $attempt
-            Write-Host "::warning::Build attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) â retrying in ${delay}s"
+            Write-Host "::warning::Build attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) Ã¢ÂÂ retrying in ${delay}s"
             Start-Sleep -Seconds $delay
           }
 
@@ -409,7 +410,7 @@ jobs:
               exit $LASTEXITCODE
             }
             $delay = 15 * $attempt
-            Write-Host "::warning::Pack attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) â retrying in ${delay}s"
+            Write-Host "::warning::Pack attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) Ã¢ÂÂ retrying in ${delay}s"
             Start-Sleep -Seconds $delay
           }
 
@@ -535,7 +536,7 @@ jobs:
                   echo "::error::Exhausted $max_attempts attempts pushing $(basename "$file") (403/429)"
                   return 1
                 fi
-                echo "::warning::Transient 403/429 pushing $(basename "$file") (attempt $attempt/$max_attempts) â retrying in ${delay}s"
+                echo "::warning::Transient 403/429 pushing $(basename "$file") (attempt $attempt/$max_attempts) Ã¢ÂÂ retrying in ${delay}s"
                 sleep $delay
                 delay=$((delay * 2))
                 attempt=$((attempt + 1))
@@ -571,7 +572,7 @@ jobs:
           }
           EOF
 
-      - name: NuGet login (OIDC to temp API key â Trusted Publishing)
+      - name: NuGet login (OIDC to temp API key Ã¢ÂÂ Trusted Publishing)
         if: inputs.nuget-target == 'nuget.org' && inputs.nuget-auth-mode == 'oidc'
         id: login
         uses: NuGet/login@v1
