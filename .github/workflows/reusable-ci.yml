@@ -1,4 +1,4 @@
-name: Reusable Ã¢ÂÂ CI (beta + release, unified)
+name: Reusable — CI (beta + release, unified)
 
 # Single reusable workflow for both channels (replaces reusable-beta-ci.yml and
 # reusable-release-ci.yml, now deprecated stubs). Flow, per the executing branch:
@@ -363,7 +363,7 @@ jobs:
               exit $LASTEXITCODE
             }
             $delay = 15 * $attempt
-            Write-Host "::warning::Build attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) Ã¢ÂÂ retrying in ${delay}s"
+            Write-Host "::warning::Build attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) — retrying in ${delay}s"
             Start-Sleep -Seconds $delay
           }
 
@@ -410,7 +410,7 @@ jobs:
               exit $LASTEXITCODE
             }
             $delay = 15 * $attempt
-            Write-Host "::warning::Pack attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) Ã¢ÂÂ retrying in ${delay}s"
+            Write-Host "::warning::Pack attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) — retrying in ${delay}s"
             Start-Sleep -Seconds $delay
           }
 
@@ -536,7 +536,7 @@ jobs:
                   echo "::error::Exhausted $max_attempts attempts pushing $(basename "$file") (403/429)"
                   return 1
                 fi
-                echo "::warning::Transient 403/429 pushing $(basename "$file") (attempt $attempt/$max_attempts) Ã¢ÂÂ retrying in ${delay}s"
+                echo "::warning::Transient 403/429 pushing $(basename "$file") (attempt $attempt/$max_attempts) — retrying in ${delay}s"
                 sleep $delay
                 delay=$((delay * 2))
                 attempt=$((attempt + 1))
@@ -572,7 +572,7 @@ jobs:
           }
           EOF
 
-      - name: NuGet login (OIDC to temp API key Ã¢ÂÂ Trusted Publishing)
+      - name: NuGet login (OIDC to temp API key — Trusted Publishing)
         if: inputs.nuget-target == 'nuget.org' && inputs.nuget-auth-mode == 'oidc'
         id: login
         uses: NuGet/login@v1
