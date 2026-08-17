@@ -264,6 +264,12 @@ jobs:
           # accessible by integration" here even though the git push and
           # `contents: write` permission both succeeded fine.
           GH_TOKEN: ${{ secrets.push-token != '' && secrets.push-token || secrets.gh-token }}
+          # Surface full request/response detail (headers + body) on stderr if this
+          # step fails again. A prior failure here returned a completely bodyless
+          # "HTTP 500" with no diagnostic info at all -- this is what would let us
+          # see the actual response (or confirm GitHub genuinely returned nothing)
+          # instead of guessing blind next time.
+          GH_DEBUG: api
         run: |
           TAG="${{ steps.committag.outputs.tag }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -278,6 +284,7 @@ jobs:
               printf '\n\n_Release notes truncated. See CHANGELOG.md for full history._\n' >> /tmp/rn-trunc.md
               mv /tmp/rn-trunc.md release-notes.md
             fi
+            echo "release-notes.md: $(wc -c < release-notes.md) bytes, $(file -b release-notes.md)"
             # GitHub's release-creation endpoint has been observed to return a bare,
             # bodyless "HTTP 500" right after the tag was just pushed (transient
             # server-side hiccup, not a real conflict) -- retry a few times with
