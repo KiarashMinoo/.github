@@ -278,11 +278,32 @@ jobs:
               printf '\n\n_Release notes truncated. See CHANGELOG.md for full history._\n' >> /tmp/rn-trunc.md
               mv /tmp/rn-trunc.md release-notes.md
             fi
-            gh release create "$TAG" \
+            # GitHub's release-creation endpoint has been observed to return a bare,
+            # bodyless "HTTP 500" right after the tag was just pushed (transient
+            # server-side hiccup, not a real conflict) -- retry a few times with
+            # backoff. Re-check for the release before each retry in case a prior
+            # attempt actually succeeded server-side despite the error response,
+            # so a retry after that never fails on a spurious "already exists".
+            max_attempts=4
+            attempt=1
+            until gh release create "$TAG" \
               --title "$TAG" \
               --notes-file release-notes.md \
               --target "${{ steps.committag.outputs.sha }}" \
-              "${PRERELEASE_FLAG[@]}"
+              "${PRERELEASE_FLAG[@]}"; do
+              if gh release view "$TAG" >/dev/null 2>&1; then
+                echo "Release $TAG now exists (a prior attempt likely succeeded despite an error response); continuing."
+                break
+              fi
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "::error::Creating release $TAG failed after $max_attempts attempts."
+                exit 1
+              fi
+              delay=$((10 * attempt))
+              echo "::warning::Create GitHub Release attempt $attempt/$max_attempts failed — retrying in ${delay}s"
+              sleep "$delay"
+              attempt=$((attempt + 1))
+            done
           fi
 
   # --- 2) build -> optional test -> pack matrix & upload artifacts ---
