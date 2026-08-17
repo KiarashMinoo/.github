@@ -253,7 +253,17 @@ jobs:
         if: inputs.create-github-release && steps.committag.outputs.tag != ''
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.gh-token }}
+          # Same push-token-with-fallback pattern as the Checkout step above.
+          # `gh release create` needs to (re-)create the tag ref via the REST
+          # API when it doesn't see it yet (eventual consistency right after
+          # the git push above), and that tag-ref creation is subject to the
+          # same tag/branch protection as a normal git push -- so it needs
+          # the same bypass-capable identity, not just contents:write.
+          # Without this, repos with protection rules that exclude the
+          # default github-actions[bot] identity get "HTTP 403: Resource not
+          # accessible by integration" here even though the git push and
+          # `contents: write` permission both succeeded fine.
+          GH_TOKEN: ${{ secrets.push-token != '' && secrets.push-token || secrets.gh-token }}
         run: |
           TAG="${{ steps.committag.outputs.tag }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
