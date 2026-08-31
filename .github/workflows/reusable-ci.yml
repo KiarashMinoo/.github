@@ -405,6 +405,27 @@ jobs:
             Start-Sleep -Seconds $delay
           }
 
+      # Auto-detected, not a switch: a repo opts in just by committing an obfuscar.xml at
+      # its root, no separate boolean input exists for this anywhere in this workflow.
+      # Runs after Build (so there's something to obfuscate) and before Pack (which packs
+      # with --no-build, so obfuscating in place here is enough -- no change needed to
+      # pack-solution.ps1 itself). Skipped for Debug builds -- obfuscation is a shipping
+      # concern, and Debug is never what gets published. See
+      # Invoke-ObfuscateAssemblies.ps1 for how a single repo-committed config gets applied
+      # correctly across every Platform x Configuration x TFM combination this matrix
+      # builds.
+      - name: Obfuscate assemblies (if configured)
+        if: matrix.configuration != 'Debug' && hashFiles('obfuscar.xml') != ''
+        shell: pwsh
+        run: |
+          if (-not (Test-Path '.config/dotnet-tools.json')) {
+            throw "obfuscar.xml is present but no .config/dotnet-tools.json local tool manifest was found. Commit one (dotnet new tool-manifest && dotnet tool install obfuscar.globaltool) so the obfuscator version is pinned in-repo."
+          }
+          dotnet tool restore
+          pwsh ./.ci-scripts/.github/scripts/Invoke-ObfuscateAssemblies.ps1 `
+            -Configuration "${{ matrix.configuration }}" `
+            -Platform "${{ matrix.platform_in }}"
+
       - name: Run tests
         if: inputs.test-command != ''
         shell: bash
