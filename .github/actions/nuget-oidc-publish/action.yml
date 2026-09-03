@@ -1,0 +1,132 @@
+name: NuGet.org Trusted Publishing (OIDC) push
+
+# Composite action, not a reusable workflow: its steps execute as part of the CALLING
+# job, inside the calling repo's OWN workflow file. That distinction is the entire
+# reason this exists -- nuget.org validates a Trusted Publishing OIDC token's
+# job_workflow_ref claim against the exact repo + workflow file that ran the
+# NuGet/login step. Inside reusable-ci.yml (a workflow_call reusable workflow hosted in
+# this repo), that claim always resolves to KiarashMinoo/.github's own workflow file,
+# never the caller's, no matter how the trust policy is configured on nuget.org --
+# confirmed as a currently unresolved upstream limitation via github.com/NuGet/login
+# issues #6 and #24 (both open as of 2026-07). A composite action has no such
+# indirection: `uses:` under `steps:` runs inline in the caller's job, so the token's
+# job_workflow_ref is the caller's own ci.yml, matching a Trusted Publishing policy
+# configured with that repo + that file.
+#
+# Usage (in the calling repo's own ci.yml, in a job that needs `id-token: write`):
+#   - uses: KiarashMinoo/.github/.github/actions/nuget-oidc-publish@main
+#     with:
+#       nuget-user: ${{ secrets.NUGET_USER }}
+#
+# Prerequisite (one-time, per calling repo, done on nuget.org by a repo owner -- not
+# something this action or Claude can do on your behalf): create a Trusted Publishing
+# policy at nuget.org > your account > Trusted Publishing, with Repository Owner =
+# KiarashMinoo, Repository = the exact calling repo name, Workflow File = the filename
+# only (e.g. `ci.yml`, not the full path), and an optional Environment left blank
+# unless the calling job declares one. Add a `NUGET_USER` repo secret (Settings >
+# Secrets and variables > Actions > Secrets) holding the nuget.org username the policy
+# is attached to.
+
+description: >
+  Downloads packed .nupkg/.snupkg artifacts uploaded earlier in this workflow run,
+  logs in to NuGet.org via OIDC Trusted Publishing (NuGet/login), and pushes them with
+  retry on transient 403/429 (and fail-fast on a real push-quota 403). Must run as a
+  step inside the calling repo's own workflow file -- see the comments in this file for
+  why, and requires `permissions: id-token: write` on the calling job.
+
+inputs:
+  nuget-user:
+    description: The nuget.org username the Trusted Publishing policy is attached to (pass secrets.NUGET_USER)
+    required: true
+  packages-pattern:
+    description: Artifact name glob to download and push as .nupkg
+    required: false
+    default: 'pkg-*'
+  symbols-pattern:
+    description: Artifact name glob to download and push as .snupkg
+    required: false
+    default: 'symbols-*'
+
+runs:
+  using: composite
+  steps:
+    - name: Download all packages artifacts
+      uses: actions/download-artifact@v8
+      with:
+        pattern: ${{ inputs.packages-pattern }}
+        path: ./dist/packages
+        merge-multiple: true
+
+    - name: Download all symbols artifacts (optional)
+      continue-on-error: true
+      uses: actions/download-artifact@v8
+      with:
+        pattern: ${{ inputs.symbols-pattern }}
+        path: ./dist/symbols
+        merge-multiple: true
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: 8.0.x
+
+    - name: NuGet login (OIDC to temp API key — Trusted Publishing)
+      id: login
+      uses: NuGet/login@v1
+      with:
+        user: ${{ inputs.nuget-user }}
+
+    - name: Publish packages to NuGet.org (OIDC Trusted Publishing)
+      shell: bash
+      env:
+        NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+      run: |
+        # Same retry/fail-fast rules as reusable-ci.yml's classic-key push loop: a 403
+        # carrying "Quota Exceeded" is nuget.org's push-rate quota (tens-of-minutes
+        # retry-after, not worth burning attempts on) so it fails fast with a clear
+        # message; any other 403/429 is treated as transient auth/permission-propagation
+        # lag and retried with backoff; anything else fails immediately.
+        push_with_retry() {
+          local file="$1"
+          local max_attempts=5 attempt=1 delay=5
+          while true; do
+            local output
+            output=$(dotnet nuget push "$file" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate 2>&1)
+            local status=$?
+            echo "$output"
+            if [ $status -eq 0 ]; then
+              sleep 0.5
+              return 0
+            fi
+            if echo "$output" | grep -qi 'Quota Exceeded'; then
+              local retry_after wait_msg
+              retry_after=$(echo "$output" | grep -oE 'retry after: [0-9]+s' | grep -oE '[0-9]+' | head -1)
+              wait_msg="a while"
+              if [ -n "$retry_after" ]; then
+                wait_msg="~$((retry_after / 60)) minute(s)"
+              fi
+              echo "::error::NuGet.org push quota exceeded for $(basename "$file") -- wait $wait_msg and re-run this job (already-pushed packages are skipped via --skip-duplicate)."
+              return 1
+            fi
+            if echo "$output" | grep -qE 'indicate success: (403|429)'; then
+              if [ $attempt -ge $max_attempts ]; then
+                echo "::error::Exhausted $max_attempts attempts pushing $(basename "$file") (403/429)"
+                return 1
+              fi
+              echo "::warning::Transient 403/429 pushing $(basename "$file") (attempt $attempt/$max_attempts) — retrying in ${delay}s"
+              sleep $delay
+              delay=$((delay * 2))
+              attempt=$((attempt + 1))
+              continue
+            fi
+            return $status
+          done
+        }
+
+        shopt -s nullglob
+        for package in ./dist/packages/*.nupkg; do
+          push_with_retry "$package" || exit 1
+        done
+        for symbols in ./dist/symbols/*.snupkg; do
+          push_with_retry "$symbols" || exit 1
+        done
