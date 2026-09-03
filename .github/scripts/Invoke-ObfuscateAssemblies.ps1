@@ -138,6 +138,46 @@ foreach ($dir in $outputDirs.Keys) {
     }
     $lines.Add("  <AssemblySearchPath path=`"$dir`" />")
     if (Test-Path $nugetCache) {
+        # A single recursive search path over the ENTIRE nuget cache (every package,
+        # every version ever restored, every asset kind -- lib/, ref/, runtimes/,
+        # analyzers/, build/, contentFiles/, tools packages, ...) is what this used to
+        # be, and it reliably failed to resolve real third-party dependencies (observed:
+        # "Unable to resolve dependency: ThunderPropagator.BuildingBlocks.Application",
+        # a package that IS restored and present in the cache) -- almost certainly
+        # because a package built with ProduceReferenceAssembly=true (every
+        # ThunderPropagator family package is) publishes the SAME assembly filename
+        # under BOTH ref/<tfm>/ (a metadata-only stub with every method body replaced)
+        # and lib/<tfm>/ (the real, loadable implementation), for EVERY target
+        # framework the package multi-targets -- so a blind recursive search hands
+        # Obfuscar a haystack containing several same-named candidates, several of them
+        # wrong (stub bodies, or a different TFM's copy), with no guarantee it finds a
+        # right one, let alone prefers it.
+        #
+        # Narrow this to exactly the folders that can possibly be right: every lib/<tfm>
+        # directory in the cache whose <tfm> segment matches the TFM this leg's own
+        # output directory ($dir) was built for (that segment is $dir's own leaf name --
+        # MSBuild's bin/ layout always ends in .../<Configuration>/<TFM>/, regardless of
+        # platform). Explicitly matching the path segment immediately before it as "lib"
+        # (via the trailing /lib/<tfm> requirement below) is what excludes every ref/,
+        # runtimes/, analyzers/, build/, and contentFiles/ folder that happens to share
+        # the same leaf folder name -- so Obfuscar only ever sees real, loadable,
+        # correct-TFM implementation assemblies, not their stub or wrong-TFM siblings.
+        # Kept non-recursive per match (each is already the exact folder wanted) and
+        # listed ahead of anything else so a correct match always wins first.
+        $tfm = Split-Path -Leaf $dir
+        $libTfmDirs = @(
+            Get-ChildItem -Path $nugetCache -Recurse -Directory -Filter $tfm -ErrorAction SilentlyContinue |
+                Where-Object { ($_.FullName -replace '\\', '/') -match "(^|/)lib/$([regex]::Escape($tfm))$" }
+        )
+        Write-Host "  Found $($libTfmDirs.Count) lib/$tfm folder(s) in the NuGet cache for dependency resolution."
+        foreach ($libDir in $libTfmDirs) {
+            $lines.Add("  <AssemblySearchPath path=`"$($libDir.FullName)`" />")
+        }
+        # Kept as a last-resort fallback for anything that doesn't follow the lib/<tfm>
+        # convention above (e.g. a dependency whose package only ships a
+        # lib/netstandard2.0/ asset that NuGet resolved as TFM-compatible rather than an
+        # exact match) -- listed last so an exact match from the loop above is always
+        # tried first.
         $lines.Add("  <AssemblySearchPath path=`"$nugetCache`" recursive=`"true`" />")
     }
     foreach ($name in $names) {
