@@ -126,6 +126,10 @@ on:
         description: Same as nuget-api-key-2-prefix, routed to secrets.nuget-api-key-3. Left empty (the default), routing is disabled.
         type: string
         default: ''
+      nuget-api-key-4-prefix:
+        description: Same as nuget-api-key-2-prefix, routed to secrets.nuget-api-key-4. Left empty (the default), routing is disabled.
+        type: string
+        default: ''
     secrets:
       gh-token:
         description: GitHub token for pushing the version/changelog commit, tagging, creating the Release, and artifact cleanup
@@ -149,8 +153,8 @@ on:
         description: >
           Classic NuGet.org API key (nuget.org > API Keys), used when nuget-target is nuget.org
           and nuget-auth-mode is 'classic' (the default). Also the fallback/default key for any
-          package whose filename doesn't match nuget-api-key-2-prefix or nuget-api-key-3-prefix
-          below, when those are set.
+          package whose filename doesn't match nuget-api-key-2-prefix, nuget-api-key-3-prefix,
+          or nuget-api-key-4-prefix below, when those are set.
         required: false
       nuget-api-key-2:
         description: >
@@ -162,6 +166,9 @@ on:
         required: false
       nuget-api-key-3:
         description: Same as nuget-api-key-2, but paired with nuget-api-key-3-prefix. Ignored entirely when nuget-api-key-3-prefix is left empty.
+        required: false
+      nuget-api-key-4:
+        description: Same as nuget-api-key-2, but paired with nuget-api-key-4-prefix. Ignored entirely when nuget-api-key-4-prefix is left empty.
         required: false
       nuget-user:
         description: NuGet.org profile name for Trusted Publishing OIDC login, used only when nuget-target is nuget.org and nuget-auth-mode is 'oidc'. See that input's description for why OIDC doesn't currently work from here.
@@ -606,8 +613,8 @@ jobs:
           }
 
           # Package-family key routing (classic nuget.org publish only): picks
-          # NUGET_API_KEY_2/_3 over the default NUGET_API_KEY when the package's filename
-          # starts with the corresponding NUGET_API_KEY_2/_3_PREFIX env var, so a repo that
+          # NUGET_API_KEY_2/_3/_4 over the default NUGET_API_KEY when the package's filename
+          # starts with the corresponding NUGET_API_KEY_2/_3/_4_PREFIX env var, so a repo that
           # publishes several distinct package-ID families can spread pushes across several
           # independent 350/hour-per-key nuget.org quota buckets instead of exhausting one
           # shared key. NuGet's own pack output names files "{PackageId}.{Version}.{ext}", and
@@ -625,6 +632,8 @@ jobs:
               echo "$NUGET_API_KEY_2"
             elif [ -n "${NUGET_API_KEY_3_PREFIX:-}" ] && [[ "$filename" == "$NUGET_API_KEY_3_PREFIX"* ]]; then
               echo "$NUGET_API_KEY_3"
+            elif [ -n "${NUGET_API_KEY_4_PREFIX:-}" ] && [[ "$filename" == "$NUGET_API_KEY_4_PREFIX"* ]]; then
+              echo "$NUGET_API_KEY_4"
             else
               echo "$NUGET_API_KEY"
             fi
@@ -645,8 +654,10 @@ jobs:
           NUGET_API_KEY: ${{ secrets.nuget-api-key }}
           NUGET_API_KEY_2: ${{ secrets.nuget-api-key-2 }}
           NUGET_API_KEY_3: ${{ secrets.nuget-api-key-3 }}
+          NUGET_API_KEY_4: ${{ secrets.nuget-api-key-4 }}
           NUGET_API_KEY_2_PREFIX: ${{ inputs.nuget-api-key-2-prefix }}
           NUGET_API_KEY_3_PREFIX: ${{ inputs.nuget-api-key-3-prefix }}
+          NUGET_API_KEY_4_PREFIX: ${{ inputs.nuget-api-key-4-prefix }}
         run: |
           source "$RUNNER_TEMP/push-with-retry.sh"
           shopt -s nullglob
