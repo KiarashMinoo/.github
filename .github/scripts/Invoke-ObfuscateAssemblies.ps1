@@ -173,12 +173,60 @@ foreach ($dir in $outputDirs.Keys) {
         foreach ($libDir in $libTfmDirs) {
             $lines.Add("  <AssemblySearchPath path=`"$($libDir.FullName)`" />")
         }
-        # Kept as a last-resort fallback for anything that doesn't follow the lib/<tfm>
-        # convention above (e.g. a dependency whose package only ships a
-        # lib/netstandard2.0/ asset that NuGet resolved as TFM-compatible rather than an
-        # exact match) -- listed last so an exact match from the loop above is always
-        # tried first.
-        $lines.Add("  <AssemblySearchPath path=`"$nugetCache`" recursive=`"true`" />")
+
+        # Anything still unresolved after the exact-tfm pass above generally falls into two
+        # buckets, both needing an EXPLICIT path -- Obfuscar's AssemblySearchPath has no
+        # recursion support at all (confirmed via github.com/obfuscar/obfuscar/issues/149,
+        # closed wontfix), so the single `recursive="true"` line this replaces was a silent
+        # no-op from the day it was added: it never searched anything below the nuget cache
+        # root, because "recursive" isn't a real Obfuscar attribute.
+        #
+        # 1. A package that doesn't ship a lib/<tfm> asset for this leg's exact TFM at all
+        #    (observed: MQTTnet 5.2.0 ships lib/net8.0 and lib/net10.0 but no lib/net9.0 --
+        #    a net9.0 project falls back, via NuGet's own TFM-compatibility rules, to the
+        #    net8.0 asset at restore time, so no lib/net9.0 folder for it will ever exist in
+        #    the cache). Fixed by also listing every OTHER lib/<tfm> folder in the cache (any
+        #    TFM, deduplicated against the exact-match list above) as a secondary, lower-
+        #    priority search path -- Obfuscar only needs SOME loadable copy of an external,
+        #    non-obfuscated dependency's metadata to build its inheritance map, not the
+        #    exact-TFM one, so a same-named assembly from a different lib/<tfm> folder is an
+        #    acceptable stand-in purely for resolving base types and virtual method groups.
+        # 2. A shared-framework assembly (observed: Microsoft.AspNetCore.Mvc.Core, pulled in
+        #    transitively by MQTTnet.AspNetCore's own <frameworkReferences> for net8.0/
+        #    net10.0) that is never a NuGet package at all -- it ships inside the .NET SDK's
+        #    own shared runtime folder (dotnet/shared/Microsoft.AspNetCore.App/<version>/,
+        #    dotnet/shared/Microsoft.NETCore.App/<version>/), so no amount of nuget-cache
+        #    searching will ever find it. Fixed by adding every installed shared-framework
+        #    version folder next to the resolved `dotnet` executable as its own search path.
+        $libTfmDirPaths = @($libTfmDirs | ForEach-Object { $_.FullName -replace '\\', '/' })
+        $libAnyTfmDirs = @(
+            Get-ChildItem -Path $nugetCache -Recurse -Directory -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.Parent -and $_.Parent.Name -eq 'lib' -and
+                    (($_.FullName -replace '\\', '/') -notin $libTfmDirPaths)
+                }
+        )
+        Write-Host "  Found $($libAnyTfmDirs.Count) additional lib/<other-tfm> folder(s) in the NuGet cache as a fallback."
+        foreach ($libDir in $libAnyTfmDirs) {
+            $lines.Add("  <AssemblySearchPath path=`"$($libDir.FullName)`" />")
+        }
+
+        $dotnetCmd = Get-Command dotnet -ErrorAction SilentlyContinue
+        $dotnetRoot = if ($env:DOTNET_ROOT) { $env:DOTNET_ROOT } elseif ($dotnetCmd) { Split-Path -Parent $dotnetCmd.Source } else { $null }
+        $sharedRoot = if ($dotnetRoot) { Join-Path $dotnetRoot 'shared' } else { $null }
+        if ($sharedRoot -and (Test-Path $sharedRoot)) {
+            $sharedFrameworkDirs = @(
+                Get-ChildItem -Path $sharedRoot -Recurse -Directory -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Parent -and $_.Parent.Parent -and $_.Parent.Parent.Name -eq (Split-Path -Leaf $sharedRoot) }
+            )
+            Write-Host "  Found $($sharedFrameworkDirs.Count) .NET shared-framework folder(s) under $sharedRoot for dependency resolution."
+            foreach ($fxDir in $sharedFrameworkDirs) {
+                $lines.Add("  <AssemblySearchPath path=`"$($fxDir.FullName)`" />")
+            }
+        }
+        else {
+            Write-Host "  Could not locate a .NET shared-framework folder (DOTNET_ROOT unset and no 'dotnet' on PATH) -- shared-framework dependencies (e.g. Microsoft.AspNetCore.*) may fail to resolve."
+        }
     }
     foreach ($name in $names) {
         $lines.Add("  <Module file=`"`$(InPath)/$name`" />")
