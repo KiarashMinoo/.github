@@ -17,7 +17,9 @@ name: NuGet.org Trusted Publishing (OIDC) push
 #   - uses: KiarashMinoo/.github/.github/actions/nuget-oidc-publish@main
 #     with:
 #       nuget-user: ${{ secrets.NUGET_USER }}
+#       nuget-filter-enabled: true   # optional -- see that input's own description
 #
+
 # Prerequisite (one-time, per calling repo, done on nuget.org by a repo owner -- not
 # something this action or Claude can do on your behalf): create a Trusted Publishing
 # policy at nuget.org > your account > Trusted Publishing, with Repository Owner =
@@ -46,6 +48,27 @@ inputs:
     description: Artifact name glob to download and push as .snupkg
     required: false
     default: 'symbols-*'
+  nuget-filter-enabled:
+    description: >
+      When true, skip pushing any .nupkg/.snupkg whose filename matches
+      nuget-filter-exclude-pattern before pushing anything -- e.g. a solution built
+      across multiple Platform x Configuration legs packs one package PER LEG (Debug,
+      Release, x86, x64, ARM64, AnyCpu, ...), and pushing every one of those variants
+      to nuget.org on every release is what exhausts nuget.org's push-rate quota on
+      repos with many packable projects. Every caller of this action currently sets
+      this true expecting exactly this filtering; it previously had no effect at all,
+      since this input didn't exist until this filtering was added directly here.
+    required: false
+    default: false
+  nuget-filter-exclude-pattern:
+    description: >
+      Basic-regex (grep -E) fragment matched against each package's bare filename when
+      nuget-filter-enabled is true -- a match means "don't push this one". The default
+      excludes every non-Release, non-AnyCpu build-leg variant (Debug, and the three
+      platform-specific legs), keeping only the single canonical Release+AnyCpu package
+      per project.
+    required: false
+    default: '\.(Debug|ARM64|x86|x64)\.'
 
 runs:
   using: composite
@@ -80,12 +103,22 @@ runs:
       shell: bash
       env:
         NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        FILTER_ENABLED: ${{ inputs.nuget-filter-enabled }}
+        FILTER_PATTERN: ${{ inputs.nuget-filter-exclude-pattern }}
       run: |
         # Same retry/fail-fast rules as reusable-ci.yml's classic-key push loop: a 403
         # carrying "Quota Exceeded" is nuget.org's push-rate quota (tens-of-minutes
         # retry-after, not worth burning attempts on) so it fails fast with a clear
         # message; any other 403/429 is treated as transient auth/permission-propagation
         # lag and retried with backoff; anything else fails immediately.
+        should_skip() {
+          local file="$1"
+          if [ "$FILTER_ENABLED" != "true" ]; then
+            return 1
+          fi
+          [[ "$(basename "$file")" =~ $FILTER_PATTERN ]]
+        }
+
         push_with_retry() {
           local file="$1"
           local max_attempts=5 attempt=1 delay=5
@@ -125,8 +158,16 @@ runs:
 
         shopt -s nullglob
         for package in ./dist/packages/*.nupkg; do
+          if should_skip "$package"; then
+            echo "Skipping $(basename "$package") (matches nuget-filter-exclude-pattern)"
+            continue
+          fi
           push_with_retry "$package" || exit 1
         done
         for symbols in ./dist/symbols/*.snupkg; do
+          if should_skip "$symbols"; then
+            echo "Skipping $(basename "$symbols") (matches nuget-filter-exclude-pattern)"
+            continue
+          fi
           push_with_retry "$symbols" || exit 1
         done
