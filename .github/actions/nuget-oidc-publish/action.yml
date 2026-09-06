@@ -19,15 +19,30 @@ name: NuGet.org Trusted Publishing (OIDC) push
 #       nuget-user: ${{ secrets.NUGET_USER }}
 #       nuget-filter-enabled: true   # optional -- see that input's own description
 #
+# Multiple quota buckets for one repo: nuget.org's push-rate quota (350-ish/hour) is
+# per API key, and NuGet/login mints one short-lived key per job. If a repo has enough
+# packable projects x build legs that a single run can exceed that quota even after
+# nuget-filter-enabled trims Debug/platform variants, split the push across SEVERAL
+# jobs instead of one -- each job declares its own `environment:`, matched by its own
+# nuget.org Trusted Publishing policy (see Prerequisite below), and passes a distinct
+# nuget-package-include-pattern so each job only pushes its own slice of packages. Each
+# job's NuGet/login call is then a fully independent OIDC identity with its own quota.
+# See ThunderPropagator.Feeviders' ci.yml for a working 4-way example (SharedKernel /
+# Feeders / Providers / InboxOutbox).
 
 # Prerequisite (one-time, per calling repo, done on nuget.org by a repo owner -- not
 # something this action or Claude can do on your behalf): create a Trusted Publishing
 # policy at nuget.org > your account > Trusted Publishing, with Repository Owner =
 # KiarashMinoo, Repository = the exact calling repo name, Workflow File = the filename
-# only (e.g. `ci.yml`, not the full path), and an optional Environment left blank
-# unless the calling job declares one. Add a `NUGET_USER` repo secret (Settings >
-# Secrets and variables > Actions > Secrets) holding the nuget.org username the policy
-# is attached to.
+# only (e.g. `ci.yml`, not the full path), and an Environment matching whatever the
+# calling job declares via `environment:` (leave the policy's Environment blank only if
+# the calling job declares none). For a multi-job split (see above), create one policy
+# PER job, same repo + workflow file, each with that job's own Environment value -- and
+# create that same Environment name under the repo's own Settings > Environments first,
+# since nuget.org's policy dropdown/OIDC claim validation needs it to already exist
+# there. Add a `NUGET_USER` repo secret (Settings > Secrets and variables > Actions >
+# Secrets) holding the nuget.org username the policy is attached to -- shared across
+# every policy/job in this repo.
 
 description: >
   Downloads packed .nupkg/.snupkg artifacts uploaded earlier in this workflow run,
@@ -69,6 +84,21 @@ inputs:
       per project.
     required: false
     default: '\.(Debug|ARM64|x86|x64)\.'
+  nuget-package-include-pattern:
+    description: >
+      Regex (bash ERE) matched against each package's bare filename -- when non-empty,
+      ONLY filenames matching it get pushed, everything else is skipped. Independent of
+      nuget-filter-enabled/nuget-filter-exclude-pattern (both checks apply if both are
+      set). Intended for splitting one repo's packages across several jobs that each
+      authenticate under a DIFFERENT GitHub Actions `environment:` (and therefore a
+      different nuget.org Trusted Publishing policy, since a policy can be scoped to a
+      specific environment) -- each such job mints its own short-lived OIDC-issued API
+      key, so each gets its own independent nuget.org push-rate quota bucket. Useful when
+      a single repo has enough packable projects x build legs that one shared quota
+      bucket isn't enough, but you still want every variant published (i.e. you can't or
+      don't want to reduce total volume via nuget-filter-enabled).
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -105,6 +135,7 @@ runs:
         NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
         FILTER_ENABLED: ${{ inputs.nuget-filter-enabled }}
         FILTER_PATTERN: ${{ inputs.nuget-filter-exclude-pattern }}
+        INCLUDE_PATTERN: ${{ inputs.nuget-package-include-pattern }}
       run: |
         # Same retry/fail-fast rules as reusable-ci.yml's classic-key push loop: a 403
         # carrying "Quota Exceeded" is nuget.org's push-rate quota (tens-of-minutes
@@ -113,10 +144,15 @@ runs:
         # lag and retried with backoff; anything else fails immediately.
         should_skip() {
           local file="$1"
-          if [ "$FILTER_ENABLED" != "true" ]; then
-            return 1
+          local name
+          name="$(basename "$file")"
+          if [ -n "$INCLUDE_PATTERN" ] && ! [[ "$name" =~ $INCLUDE_PATTERN ]]; then
+            return 0
           fi
-          [[ "$(basename "$file")" =~ $FILTER_PATTERN ]]
+          if [ "$FILTER_ENABLED" = "true" ] && [[ "$name" =~ $FILTER_PATTERN ]]; then
+            return 0
+          fi
+          return 1
         }
 
         push_with_retry() {
@@ -159,14 +195,14 @@ runs:
         shopt -s nullglob
         for package in ./dist/packages/*.nupkg; do
           if should_skip "$package"; then
-            echo "Skipping $(basename "$package") (matches nuget-filter-exclude-pattern)"
+            echo "Skipping $(basename "$package") (doesn't match nuget-package-include-pattern, or matches nuget-filter-exclude-pattern)"
             continue
           fi
           push_with_retry "$package" || exit 1
         done
         for symbols in ./dist/symbols/*.snupkg; do
           if should_skip "$symbols"; then
-            echo "Skipping $(basename "$symbols") (matches nuget-filter-exclude-pattern)"
+            echo "Skipping $(basename "$symbols") (doesn't match nuget-package-include-pattern, or matches nuget-filter-exclude-pattern)"
             continue
           fi
           push_with_retry "$symbols" || exit 1
