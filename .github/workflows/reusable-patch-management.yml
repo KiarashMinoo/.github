@@ -105,7 +105,19 @@ jobs:
         id: audit
         shell: pwsh
         run: |
-          $result = dotnet list package --vulnerable --include-transitive 2>&1
+          # `dotnet list package` only understands PackageReference-style SDK projects.
+          # Running it against a .sln/.slnx directly walks every project it contains,
+          # including non-restorable project types (e.g. a docker-compose .dcproj used
+          # for container orchestration), which makes the whole command fail with
+          # "uses package.config for NuGet packages" before it scans anything. Iterating
+          # over *.csproj/*.fsproj/*.vbproj directly sidesteps that — .dcproj (and any
+          # other non-.NET-project type) is simply never in the list.
+          $projects = Get-ChildItem -Recurse -Include "*.csproj","*.fsproj","*.vbproj" |
+            Where-Object { $_.FullName -notmatch 'node_modules|\.git|\.ci-scripts' }
+          $result = foreach ($proj in $projects) {
+            Write-Host "Auditing: $($proj.FullName)"
+            dotnet list $proj.FullName package --vulnerable --include-transitive 2>&1
+          }
           $result | Tee-Object -FilePath vulnerable-packages.txt
           $found = ($result | Select-String "has the following vulnerable packages").Count -gt 0
           "vulnerable_found=$($found.ToString().ToLower())" >> $env:GITHUB_OUTPUT
@@ -118,7 +130,13 @@ jobs:
         id: outdated
         shell: pwsh
         run: |
-          $result = dotnet list package --outdated 2>&1
+          # Same non-restorable-project issue as the vulnerability audit above — scan
+          # actual .NET project files individually rather than the whole solution.
+          $projects = Get-ChildItem -Recurse -Include "*.csproj","*.fsproj","*.vbproj" |
+            Where-Object { $_.FullName -notmatch 'node_modules|\.git|\.ci-scripts' }
+          $result = foreach ($proj in $projects) {
+            dotnet list $proj.FullName package --outdated 2>&1
+          }
           $result | Tee-Object -FilePath outdated-packages.txt
           $found = ($result | Select-String "has the following updates available").Count -gt 0
           "outdated_found=$($found.ToString().ToLower())" >> $env:GITHUB_OUTPUT
