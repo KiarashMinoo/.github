@@ -221,8 +221,19 @@ if ($commitCount -eq 0) {
 $newSection = ($lines -join "`n").TrimEnd() + "`n"
 Set-Content -Path $NotesPath -Value $newSection -NoNewline
 
-if (Test-Path $ChangelogPath) {
-    $existing = Get-Content $ChangelogPath -Raw
+$intro = "# Changelog`n`nAll notable changes to this project will be documented in this file.`nFormat follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).`n`n"
+
+# Get-Content -Raw returns $null (not an empty string) when the target file exists but is zero
+# bytes -- a real, documented PowerShell quirk, not a hypothetical: a freshly-created or
+# freshly-reset CHANGELOG.md that hasn't had its intro text written yet is exactly this case,
+# and every .Method() call below on $existing would otherwise throw "You cannot call a method
+# on a null-valued expression." (a real failure a live run hit this exact way). Treat "exists
+# but empty/whitespace-only" the same as "doesn't exist yet" -- both need the standing intro
+# written, not just two bare newlines pasted in front of the first entry.
+$existing = if (Test-Path $ChangelogPath) { Get-Content $ChangelogPath -Raw } else { $null }
+if ([string]::IsNullOrWhiteSpace($existing)) {
+    $combined = $intro + $newSection
+} else {
     # Insert after the standing header/intro (everything up to and including the first blank
     # line that precedes a "## [" section, or the whole file if there are no prior sections yet).
     $headerEnd = $existing.IndexOf("`n## [")
@@ -234,9 +245,6 @@ if (Test-Path $ChangelogPath) {
         $rest = $existing.Substring($headerEnd + 1)
     }
     $combined = $header + $newSection + "`n" + $rest
-} else {
-    $intro = "# Changelog`n`nAll notable changes to this project will be documented in this file.`nFormat follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).`n`n"
-    $combined = $intro + $newSection
 }
 
 Set-Content -Path $ChangelogPath -Value $combined.TrimEnd("`n") -NoNewline
