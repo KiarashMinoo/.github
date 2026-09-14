@@ -411,7 +411,6 @@ jobs:
             Write-Host "::warning::Build attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) — retrying in ${delay}s"
             Start-Sleep -Seconds $delay
           }
-
       # Auto-detected, not a switch: a repo opts in just by committing an obfuscar.xml at
       # its root, no separate boolean input exists for this anywhere in this workflow.
       # Runs after Build (so there's something to obfuscate) and before Pack (which packs
