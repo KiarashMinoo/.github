@@ -62,19 +62,22 @@ description: >
   Downloads packed .nupkg/.snupkg artifacts uploaded earlier in this workflow run,
   then either (mode: push, default) logs in to NuGet.org via OIDC Trusted Publishing
   (NuGet/login) and pushes them with retry on transient 403/429 (and fail-fast on a
-  real push-quota 403), or (mode: queue) tars+gzips the filtered set and uploads it as
-  a compressed artifact for KiarashMinoo/.github's nuget-queue-relay.yml to push later.
-  mode: push must run as a step inside the calling repo's own workflow file -- see the
+  real push-quota 403), or (mode: queue) tars+gzips the filtered set, uploads it as a
+  compressed artifact for KiarashMinoo/.github's nuget-queue-relay.yml to push later,
+  then deletes the now-redundant raw pkg-*/symbols-* artifacts from this run. mode:
+  push must run as a step inside the calling repo's own workflow file -- see the
   comments in this file for why -- and requires `permissions: id-token: write` on the
-  calling job; mode: queue needs neither.
+  calling job; mode: queue needs `permissions: actions: write` instead (to delete the
+  raw artifacts it just folded into the payload) and no `id-token: write`.
 
 inputs:
   mode:
     description: >
       'push' (default) -- download, filter, OIDC-login, and push to nuget.org, exactly
       as before this input existed. 'queue' -- download and filter identically, but tar
-      +gzip the surviving set and upload it as one compressed artifact instead of
-      logging in or pushing at all; nuget-user is ignored in this mode. 'push-local' --
+      +gzip the surviving set, upload it as one compressed artifact, then delete the
+      raw pkg-*/symbols-* artifacts from this run (now redundant) instead of logging in
+      or pushing at all; nuget-user is ignored in this mode. 'push-local' --
       same OIDC-login-and-push as 'push', but skips the download-artifact steps
       entirely and pushes whatever the caller already placed in ./dist/packages and
       ./dist/symbols; used only by KiarashMinoo/.github's nuget-queue-relay.yml, which
@@ -317,3 +320,31 @@ runs:
         # successful push, well before this ever matters.
         retention-days: 2
         if-no-files-found: error
+
+    - name: "Delete raw packaging artifacts (mode: queue)"
+      if: inputs.mode == 'queue' && env.queue_has_payload == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PACKAGES_PATTERN: ${{ inputs.packages-pattern }}
+        SYMBOLS_PATTERN: ${{ inputs.symbols-pattern }}
+      run: |
+        # The pkg-*/symbols-* artifacts downloaded above are now folded into the single
+        # queue-payload.tar.gz just uploaded -- keeping the raw originals around too just
+        # burns Actions storage until their own 1-day retention catches up, so delete them
+        # from this run immediately instead. Scoped to prefixes derived from
+        # packages-pattern/symbols-pattern (stripping a trailing '*', which covers the
+        # 'pkg-*'/'symbols-*' defaults every caller uses), restricted to THIS run only via
+        # the runs/{run_id}/artifacts endpoint, and explicitly excludes anything starting
+        # with nuget-queue- as a belt-and-suspenders guard against ever deleting the
+        # payload this same job just uploaded. Requires actions: write on the calling job
+        # -- best-effort (a failed delete here doesn't fail the job; the artifact just
+        # falls back to expiring on its own retention-days: 1).
+        packages_prefix="${PACKAGES_PATTERN%\*}"
+        symbols_prefix="${SYMBOLS_PATTERN%\*}"
+        gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --paginate \
+          --jq ".artifacts[] | select(.expired == false) | select((.name | startswith(\"$packages_prefix\")) or (.name | startswith(\"$symbols_prefix\"))) | select(.name | startswith(\"nuget-queue-\") | not) | .id" \
+          | while read -r id; do
+              echo "Deleting raw packaging artifact $id (folded into the queue payload above)"
+              gh api "repos/${{ github.repository }}/actions/artifacts/$id" -X DELETE || echo "::warning::Failed to delete artifact $id -- it will just expire on its own retention"
+            done
