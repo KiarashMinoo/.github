@@ -214,3 +214,5 @@ Create `.github/` if it does not exist.
 - Package-manager version bumps detected from manifest diffs (`.csproj`/`Directory.Build.props`, `package.json`, `pyproject.toml`, `go.mod`, `pom.xml`/`build.gradle`, `Cargo.toml`, etc.) go in a 📦 Dependencies table (Package | Old | New).
 - Commits touching only `Tests/**` → 🧪 Tests.
 - Commits touching only `*.md` → 📝 Documentation.
+- An entry states what changed and nothing else — never a caveat, warning, or suggestion aimed at the reader ("consider testing before upgrading," "further work needed," "may require migration"). If a change genuinely needs a migration note, that belongs in the commit body or a dedicated upgrade guide, not the changelog line.
+- When a commit subject is unclear or written in shorthand, rewrite it into a plain, complete line rather than pasting it verbatim — keep proper nouns, ticket IDs, and exact command/flag names as written. Skip stock vocabulary like *robust*, *seamless*, *leverage*, *comprehensive*, *cutting-edge* when rephrasing; describe the actual change instead.

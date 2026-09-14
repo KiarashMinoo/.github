@@ -1,0 +1,319 @@
+name: NuGet.org Trusted Publishing (OIDC) push
+
+# Composite action, not a reusable workflow: its steps execute as part of the CALLING
+# job, inside the calling repo's OWN workflow file. That distinction is the entire
+# reason this exists -- nuget.org validates a Trusted Publishing OIDC token's
+# job_workflow_ref claim against the exact repo + workflow file that ran the
+# NuGet/login step. Inside reusable-ci.yml (a workflow_call reusable workflow hosted in
+# this repo), that claim always resolves to KiarashMinoo/.github's own workflow file,
+# never the caller's, no matter how the trust policy is configured on nuget.org --
+# confirmed as a currently unresolved upstream limitation via github.com/NuGet/login
+# issues #6 and #24 (both open as of 2026-07). A composite action has no such
+# indirection: `uses:` under `steps:` runs inline in the caller's job, so the token's
+# job_workflow_ref is the caller's own ci.yml, matching a Trusted Publishing policy
+# configured with that repo + that file.
+#
+# Usage (in the calling repo's own ci.yml, in a job that needs `id-token: write`):
+#   - uses: KiarashMinoo/.github/.github/actions/nuget-oidc-publish@main
+#     with:
+#       nuget-user: ${{ secrets.NUGET_USER }}
+#       nuget-filter-enabled: true   # optional -- see that input's own description
+#
+# Manual vs. automated runs (mode input, added 2026-09-14): manual workflow_dispatch
+# runs keep pushing directly (mode: push, the default -- unchanged behavior, still
+# subject to this repo's own Trusted Publishing policy and its own quota bucket).
+# Automated runs (push-triggered) instead pass mode: queue, which downloads + filters
+# packages exactly as before but, instead of logging in and pushing, tars+gzips the
+# surviving set and uploads it as a single compressed artifact for
+# KiarashMinoo/.github's nuget-queue-relay.yml (cron, every 20 min) to pick up later.
+# That central relay pulls each family repo's queued artifacts in FIFO order (oldest
+# created_at first), decompresses one right before pushing it, and pushes under its
+# OWN OIDC identity (a Trusted Publishing policy on .github's own workflow file) --
+# collapsing every automated repo's pushes onto one deliberately-paced queue instead
+# of N repos independently racing the same account-wide quota. See
+# KiarashMinoo/.github's nuget-queue-relay.yml for the pull/push/delete side of this.
+#
+# Multiple quota buckets for one repo: nuget.org's push-rate quota (350-ish/hour) is
+# per API key, and NuGet/login mints one short-lived key per job. If a repo has enough
+# packable projects x build legs that a single run can exceed that quota even after
+# nuget-filter-enabled trims Debug/platform variants, split the push across SEVERAL
+# jobs instead of one -- each job declares its own `environment:`, matched by its own
+# nuget.org Trusted Publishing policy (see Prerequisite below), and passes a distinct
+# nuget-package-include-pattern so each job only pushes its own slice of packages. Each
+# job's NuGet/login call is then a fully independent OIDC identity with its own quota.
+# See ThunderPropagator.Feeviders' ci.yml for a working 4-way example (SharedKernel /
+# Feeders / Providers / InboxOutbox).
+
+# Prerequisite (one-time, per calling repo, done on nuget.org by a repo owner -- not
+# something this action or Claude can do on your behalf): create a Trusted Publishing
+# policy at nuget.org > your account > Trusted Publishing, with Repository Owner =
+# KiarashMinoo, Repository = the exact calling repo name, Workflow File = the filename
+# only (e.g. `ci.yml`, not the full path), and an Environment matching whatever the
+# calling job declares via `environment:` (leave the policy's Environment blank only if
+# the calling job declares none). For a multi-job split (see above), create one policy
+# PER job, same repo + workflow file, each with that job's own Environment value -- and
+# create that same Environment name under the repo's own Settings > Environments first,
+# since nuget.org's policy dropdown/OIDC claim validation needs it to already exist
+# there. Add a `NUGET_USER` repo secret (Settings > Secrets and variables > Actions >
+# Secrets) holding the nuget.org username the policy is attached to -- shared across
+# every policy/job in this repo.
+
+description: >
+  Downloads packed .nupkg/.snupkg artifacts uploaded earlier in this workflow run,
+  then either (mode: push, default) logs in to NuGet.org via OIDC Trusted Publishing
+  (NuGet/login) and pushes them with retry on transient 403/429 (and fail-fast on a
+  real push-quota 403), or (mode: queue) tars+gzips the filtered set and uploads it as
+  a compressed artifact for KiarashMinoo/.github's nuget-queue-relay.yml to push later.
+  mode: push must run as a step inside the calling repo's own workflow file -- see the
+  comments in this file for why -- and requires `permissions: id-token: write` on the
+  calling job; mode: queue needs neither.
+
+inputs:
+  mode:
+    description: >
+      'push' (default) -- download, filter, OIDC-login, and push to nuget.org, exactly
+      as before this input existed. 'queue' -- download and filter identically, but tar
+      +gzip the surviving set and upload it as one compressed artifact instead of
+      logging in or pushing at all; nuget-user is ignored in this mode. 'push-local' --
+      same OIDC-login-and-push as 'push', but skips the download-artifact steps
+      entirely and pushes whatever the caller already placed in ./dist/packages and
+      ./dist/symbols; used only by KiarashMinoo/.github's nuget-queue-relay.yml, which
+      populates those directories itself by decompressing a queued payload pulled from
+      another repo's run (there's no "artifact from this run" to download in that
+      case). See the header comment above for why/when to use queue mode.
+    required: false
+    default: 'push'
+  queue-artifact-name:
+    description: >
+      Artifact name to upload the compressed payload under when mode is 'queue'
+      (ignored otherwise). Leave empty to auto-derive
+      nuget-queue-{job}-{run_id}-{run_attempt}, which is already distinct per job --
+      only override this if a caller needs a different naming scheme. Must stay unique
+      per job within a run when a repo splits publishing across multiple jobs (see
+      ThunderPropagator.Feeviders' 4-way example), so one job's queued payload never
+      collides with a sibling's.
+    required: false
+    default: ''
+  nuget-user:
+    description: >
+      The nuget.org username the Trusted Publishing policy is attached to (pass
+      secrets.NUGET_USER). Required when mode is 'push'; ignored when mode is 'queue'.
+    required: false
+  packages-pattern:
+    description: Artifact name glob to download and push as .nupkg
+    required: false
+    default: 'pkg-*'
+  symbols-pattern:
+    description: Artifact name glob to download and push as .snupkg
+    required: false
+    default: 'symbols-*'
+  nuget-filter-enabled:
+    description: >
+      When true, skip pushing any .nupkg/.snupkg whose filename matches
+      nuget-filter-exclude-pattern before pushing anything -- e.g. a solution built
+      across multiple Platform x Configuration legs packs one package PER LEG (Debug,
+      Release, x86, x64, ARM64, AnyCpu, ...), and pushing every one of those variants
+      to nuget.org on every release is what exhausts nuget.org's push-rate quota on
+      repos with many packable projects. Every caller of this action currently sets
+      this true expecting exactly this filtering; it previously had no effect at all,
+      since this input didn't exist until this filtering was added directly here.
+    required: false
+    default: false
+  nuget-filter-exclude-pattern:
+    description: >
+      Basic-regex (grep -E) fragment matched against each package's bare filename when
+      nuget-filter-enabled is true -- a match means "don't push this one". The default
+      excludes every non-Release, non-AnyCpu build-leg variant (Debug, and the three
+      platform-specific legs), keeping only the single canonical Release+AnyCpu package
+      per project.
+    required: false
+    default: '\.(Debug|ARM64|x86|x64)\.'
+  nuget-package-include-pattern:
+    description: >
+      Regex (bash ERE) matched against each package's bare filename -- when non-empty,
+      ONLY filenames matching it get pushed, everything else is skipped. Independent of
+      nuget-filter-enabled/nuget-filter-exclude-pattern (both checks apply if both are
+      set). Intended for splitting one repo's packages across several jobs that each
+      authenticate under a DIFFERENT GitHub Actions `environment:` (and therefore a
+      different nuget.org Trusted Publishing policy, since a policy can be scoped to a
+      specific environment) -- each such job mints its own short-lived OIDC-issued API
+      key, so each gets its own independent nuget.org push-rate quota bucket. Useful when
+      a single repo has enough packable projects x build legs that one shared quota
+      bucket isn't enough, but you still want every variant published (i.e. you can't or
+      don't want to reduce total volume via nuget-filter-enabled).
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Download all packages artifacts
+      if: inputs.mode == 'push'
+      uses: actions/download-artifact@v8
+      with:
+        pattern: ${{ inputs.packages-pattern }}
+        path: ./dist/packages
+        merge-multiple: true
+
+    - name: Download all symbols artifacts (optional)
+      if: inputs.mode == 'push'
+      continue-on-error: true
+      uses: actions/download-artifact@v8
+      with:
+        pattern: ${{ inputs.symbols-pattern }}
+        path: ./dist/symbols
+        merge-multiple: true
+
+    - name: Setup .NET
+      if: inputs.mode == 'push' || inputs.mode == 'push-local'
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: 8.0.x
+
+    - name: NuGet login (OIDC to temp API key — Trusted Publishing)
+      if: inputs.mode == 'push' || inputs.mode == 'push-local'
+      id: login
+      uses: NuGet/login@v1
+      with:
+        user: ${{ inputs.nuget-user }}
+
+    - name: Publish packages to NuGet.org (OIDC Trusted Publishing)
+      if: inputs.mode == 'push' || inputs.mode == 'push-local'
+      shell: bash
+      env:
+        NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        FILTER_ENABLED: ${{ inputs.nuget-filter-enabled }}
+        FILTER_PATTERN: ${{ inputs.nuget-filter-exclude-pattern }}
+        INCLUDE_PATTERN: ${{ inputs.nuget-package-include-pattern }}
+      run: |
+        # Same retry/fail-fast rules as reusable-ci.yml's classic-key push loop: a 403
+        # carrying "Quota Exceeded" is nuget.org's push-rate quota (tens-of-minutes
+        # retry-after, not worth burning attempts on) so it fails fast with a clear
+        # message; any other 403/429 is treated as transient auth/permission-propagation
+        # lag and retried with backoff; anything else fails immediately.
+        should_skip() {
+          local file="$1"
+          local name
+          name="$(basename "$file")"
+          if [ -n "$INCLUDE_PATTERN" ] && ! [[ "$name" =~ $INCLUDE_PATTERN ]]; then
+            return 0
+          fi
+          if [ "$FILTER_ENABLED" = "true" ] && [[ "$name" =~ $FILTER_PATTERN ]]; then
+            return 0
+          fi
+          return 1
+        }
+
+        push_with_retry() {
+          local file="$1"
+          local max_attempts=5 attempt=1 delay=5
+          while true; do
+            local output
+            output=$(dotnet nuget push "$file" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate 2>&1)
+            local status=$?
+            echo "$output"
+            if [ $status -eq 0 ]; then
+              sleep 0.5
+              return 0
+            fi
+            if echo "$output" | grep -qi 'Quota Exceeded'; then
+              local retry_after wait_msg
+              retry_after=$(echo "$output" | grep -oE 'retry after: [0-9]+s' | grep -oE '[0-9]+' | head -1)
+              wait_msg="a while"
+              if [ -n "$retry_after" ]; then
+                wait_msg="~$((retry_after / 60)) minute(s)"
+              fi
+              echo "::error::NuGet.org push quota exceeded for $(basename "$file") -- wait $wait_msg and re-run this job (already-pushed packages are skipped via --skip-duplicate)."
+              return 1
+            fi
+            if echo "$output" | grep -qE 'indicate success: (403|429)'; then
+              if [ $attempt -ge $max_attempts ]; then
+                echo "::error::Exhausted $max_attempts attempts pushing $(basename "$file") (403/429)"
+                return 1
+              fi
+              echo "::warning::Transient 403/429 pushing $(basename "$file") (attempt $attempt/$max_attempts) — retrying in ${delay}s"
+              sleep $delay
+              delay=$((delay * 2))
+              attempt=$((attempt + 1))
+              continue
+            fi
+            return $status
+          done
+        }
+
+        shopt -s nullglob
+        for package in ./dist/packages/*.nupkg; do
+          if should_skip "$package"; then
+            echo "Skipping $(basename "$package") (doesn't match nuget-package-include-pattern, or matches nuget-filter-exclude-pattern)"
+            continue
+          fi
+          push_with_retry "$package" || exit 1
+        done
+        for symbols in ./dist/symbols/*.snupkg; do
+          if should_skip "$symbols"; then
+            echo "Skipping $(basename "$symbols") (doesn't match nuget-package-include-pattern, or matches nuget-filter-exclude-pattern)"
+            continue
+          fi
+          push_with_retry "$symbols" || exit 1
+        done
+
+    - name: "Package queue payload (mode: queue)"
+      if: inputs.mode == 'queue'
+      shell: bash
+      env:
+        FILTER_ENABLED: ${{ inputs.nuget-filter-enabled }}
+        FILTER_PATTERN: ${{ inputs.nuget-filter-exclude-pattern }}
+        INCLUDE_PATTERN: ${{ inputs.nuget-package-include-pattern }}
+      run: |
+        # Same should_skip() rules as the push path above -- only packages that would
+        # have been pushed today ever leave this job, whether pushed directly or queued.
+        should_skip() {
+          local file="$1"
+          local name
+          name="$(basename "$file")"
+          if [ -n "$INCLUDE_PATTERN" ] && ! [[ "$name" =~ $INCLUDE_PATTERN ]]; then
+            return 0
+          fi
+          if [ "$FILTER_ENABLED" = "true" ] && [[ "$name" =~ $FILTER_PATTERN ]]; then
+            return 0
+          fi
+          return 1
+        }
+
+        mkdir -p ./dist/queue/packages ./dist/queue/symbols
+        shopt -s nullglob
+        count=0
+        for package in ./dist/packages/*.nupkg; do
+          should_skip "$package" && continue
+          cp "$package" ./dist/queue/packages/
+          count=$((count + 1))
+        done
+        for symbols in ./dist/symbols/*.snupkg; do
+          should_skip "$symbols" && continue
+          cp "$symbols" ./dist/queue/symbols/
+          count=$((count + 1))
+        done
+
+        if [ "$count" -eq 0 ]; then
+          echo "No packages survived filtering -- nothing to queue, skipping payload creation."
+          echo "queue_has_payload=false" >> "$GITHUB_ENV"
+          exit 0
+        fi
+        echo "queue_has_payload=true" >> "$GITHUB_ENV"
+
+        # Stays compressed end-to-end: nuget-queue-relay.yml downloads this tarball as-is
+        # and decompresses only in the step immediately before dotnet nuget push.
+        tar -czf ./dist/queue-payload.tar.gz -C ./dist/queue .
+
+    - name: Upload queue payload
+      if: inputs.mode == 'queue' && env.queue_has_payload == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.queue-artifact-name != '' && inputs.queue-artifact-name || format('nuget-queue-{0}-{1}-{2}', github.job, github.run_id, github.run_attempt) }}
+        path: ./dist/queue-payload.tar.gz
+        # 2 days: nuget-queue-relay.yml polls every 20 minutes, so this is a generous
+        # safety margin against the relay being paused/failing for a while, not a normal
+        # wait time -- the relay deletes the artifact itself immediately after a
+        # successful push, well before this ever matters.
+        retention-days: 2
+        if-no-files-found: error

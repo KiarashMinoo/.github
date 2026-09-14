@@ -246,6 +246,16 @@ Use **ArchUnit** (Apache-2.0):
 
 ---
 
+## Completeness (all stacks)
+
+Every generated test is real and runnable — never a stand-in for one.
+
+- Forbidden: `[Fact(Skip = "...")]`, `it.todo(...)`, `test.skip(...)`, `@pytest.mark.skip`, `t.Skip(...)`, `@Disabled`, empty test bodies, and placeholder assertions such as `Assert.True(true)` or `expect(true).toBe(true)`.
+- No `TODO` comments and no notes asking a maintainer to finish the test later. If a case can't be tested meaningfully yet (missing seam, no public entry point), leave it out and list it under "Types/symbols skipped" in the output report instead of generating a stub for it.
+- Keep comments inside generated tests minimal and specific to the scenario under test — avoid boilerplate framing like "This test verifies that..." or "This ensures the method behaves correctly."; the test name and assertions should already make that clear.
+
+---
+
 ## Idempotency (all stacks)
 
 - Existing test methods/cases: merge new ones in; never overwrite.

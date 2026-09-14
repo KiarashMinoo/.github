@@ -7,6 +7,17 @@ tools: ['runCommands', 'editFiles', 'search/codebase']
 
 Act autonomously and **do not ask for confirmations** unless Copilot requires it. Use safe defaults.
 
+## Writing Style (applies to every generated document)
+
+Every README ships as finished documentation, not a draft. It describes what the code does and how to use it, never how the generator arrived at that description.
+
+* No meta-commentary about the generation process: no "inferred from limited doc comments," no confidence caveats, no mention of Copilot, AI, or automation anywhere in the shipped text.
+* No forward-looking notes to a future maintainer: no "consider adding summaries to source," no "TODO," no "this section could be expanded." State what is true about the code today; nothing else belongs in the document.
+* Skip stock AI vocabulary — *robust*, *seamless*, *comprehensive*, *leverage*, *cutting-edge*, *delve*, *testament to*, *game-changer*, *streamline*, *ecosystem* — in favor of plain, specific wording.
+* Bold sparingly, for genuine emphasis only. Sentence-case headings. Use bullets for parameter/type/file lists where the content is genuinely list-shaped; use prose paragraphs for the Overview and any explanation.
+* Vary sentence length in prose sections the way a person writing documentation would; avoid padding transitions like "Moreover" or "It's worth noting that."
+* If a folder's public surface is thin, describe accurately what is there rather than apologizing for what isn't. Every shipped README reads the same regardless of how many extraction passes it took.
+
 ## Stack Detection
 
 Detect every stack present in the repo — a repo may contain more than one:
@@ -90,10 +101,7 @@ A folder README **must not** be empty or skeletal. If initial extraction yields 
   * Files table (all files),
   * A minimal **API Reference (Summary)** listing key types/symbols (public+internal) with one-line descriptions,
   * One **Usage Recipe** relevant to the folder (even if generic, but realistic for the domain).
-* If the folder has no source files in any detected stack and no children: create a **Leaf README** with “Files: *None*” and a TODO line prompting future description.
-* Mark the README with a gentle banner if content relied on heuristics:
-
-  > *Note: Some details inferred due to limited doc comments. Consider adding summaries to source.*
+* If the folder has no source files in any detected stack and no children: create a **Leaf README** with a short paragraph describing the folder's purpose (inferred from its name and position in the tree) and “Files: *None*”. Write the best available description in full — never a placeholder or a prompt for someone else to fill in later.
 
 **Never leave a README with only a title and one small paragraph.**
 
@@ -150,7 +158,7 @@ A folder README **must not** be empty or skeletal. If initial extraction yields 
 * For images (PNG/SVG) already in repo, keep relative links and filenames; do **not** hardcode absolute paths. Place under `/docs/assets/<canonical>/` if exporting.
 * Keep diagrams **small and legible**: ≤ 30 nodes per diagram; split into multiple diagrams if larger.
 * Cross-link from **Files** and **Types** sections to the **Diagrams** anchors where relevant (e.g., “see [Pipeline sequence](#pipeline-sequence)”).
-* If uncertain, add an *Assumptions* bullet under the diagram and mark with the heuristics banner.
+* If uncertain about a relationship, keep the diagram to what's verifiable from the code rather than guessing at edges.
 
 ### When to auto-generate
 
@@ -320,11 +328,11 @@ A folder README **must not** be empty or skeletal. If initial extraction yields 
     * `Functions` = exported or top-level functions counted from docs.
   * Always include `Diagrams` = `✓` if a `## Diagrams` section has ≥1 Mermaid block; else `✗`.
 * Render badges as inline code; sort areas/children alphabetically; keep stable across runs.
-* If a README is flagged with the heuristics banner, append `(heuristic)`; if missing required sections, append `(needs details)`.
+* Badges reflect only counts and diagram presence — never append a quality caveat like `(heuristic)` or `(needs details)` to a catalog entry. A README that would still need one of those tags after Pass 3 gets a fourth pass before the run ends; the shipped catalog only ever lists finished documents.
 
-## Coverage Audit (append to `/docs/README.md`)
+## Run Report (console/PR output only — never written into a generated doc)
 
-List every traversed folder with a ✅ if required sections (incl. **Diagrams**) are present, or ❌ with reasons and retry counts. Include collision/rename notes.
+Report, outside any file the run commits: every traversed folder, which extraction pass it took, any collision/rename applied, and any folder that could not be completed and why. This is operational output for whoever triggered the run, not part of the documentation set.
 
 ---
 

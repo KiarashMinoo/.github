@@ -1,221 +1,96 @@
-# Ahmad Kiarash Minoo
+# Ahmad (Kiarash) Minoo
 
-**Senior .NET Backend Architect · Open-Source Developer · Distributed Systems Engineer**
+**Senior .NET Backend / Full-Stack Engineer · Muscat, Oman**
 
-Reliable backend systems are designed, scaled, and optimized with a strong focus on performance, maintainability, and clean architecture.
+I've been building software since 2003. Most of my recent work is backend and platform engineering with C# and .NET: distributed services, messaging, real-time data, caching, identity, database-heavy systems, and reusable libraries.
 
-Distributed platforms, streaming systems, enterprise APIs, and reusable .NET libraries are delivered across fintech, telecom, education, e-government, healthcare, and developer tooling domains.
+I still work with Angular when a feature crosses the UI, but backend architecture and systems work are where I spend most of my time.
 
----
+## What I'm working with now
 
-## About
+- C#, .NET 8/9/10, ASP.NET Core, ABP
+- Clean Architecture, DDD, CQRS/MediatR, modular monoliths and microservices
+- Kafka, RabbitMQ, Redis, SignalR, WebTransport, gRPC and WebSocket
+- PostgreSQL, SQL Server, MongoDB, MySQL and SQLite
+- OpenTelemetry, xUnit, BenchmarkDotNet, Docker, Kubernetes and CI/CD
+- OAuth2/OIDC/JWT, OpenIddict and policy-based authorization
 
-Senior .NET Backend / Full-Stack Developer with around **20+ years of experience**, currently based in **Muscat, Oman**. Active open-source contributor with **1,099+ commits**.
-
-Production systems have been built from early Delphi and .NET 1.0-era applications through modern **.NET 8/9/10**, ASP.NET Core, microservices, event-driven architecture, and high-throughput streaming platforms.
-
-Current work is focused on **ABP-based higher education platforms** at **Asl Al-Uroba**, including SDK infrastructure, admissions systems, and college admission workflows.
-
-Relocation opportunities are actively being explored for senior backend/platform roles in **Australia, New Zealand, Sweden, and the Netherlands**.
-
----
-
-## GitHub Stats
-
-<div align="center">
-
-![Glance](http://github-profile-summary-cards.vercel.app/api/cards/profile-details?username=KiarashMinoo&theme=tokyonight)
-
-
-![GitHub Stats](https://github-profile-summary-cards.vercel.app/api/cards/stats?username=KiarashMinoo&theme=tokyonight)
-
-![GitHub Streak](https://streak-stats.demolab.com?user=KiarashMinoo&theme=tokyonight&hide_border=true)
-
-</div>
-
----
-
-## Top Languages
-
-<div align="center">
-
-![Top Languages by Repository](https://github-profile-summary-cards.vercel.app/api/cards/repos-per-language?username=KiarashMinoo&theme=tokyonight)
-
-![Top Languages by Commit](https://github-profile-summary-cards.vercel.app/api/cards/most-commit-language?username=KiarashMinoo&theme=tokyonight)
-
-</div>
-
-**Primary:** C# · C/C++ · T-SQL  
-**Secondary:** JavaScript · TypeScript · Python · Go  
-**Tooling:** HTML/CSS · YAML · Shell
-
----
-
-## Tip of the Day
-
-<div align="center">
-
-![Readme Quotes](https://quotes-github-readme.vercel.app/api?type=horizontal&theme=tokyonight)
-
-</div>
-
-> 💡 **Today's engineering tip:** Design boundaries first, implementations second. A well-placed interface today prevents a distributed monolith tomorrow.
-
----
-
-## Core Stack
-
-```txt
-C# · .NET 8/9/10 · ASP.NET Core · REST APIs · gRPC
-SQL Server · Redis · Kafka · RabbitMQ · AWS · Azure
-Microservices · DDD · CQRS · Clean Architecture · Event-Driven Architecture
-WebSockets · MQTT 5.0 · QUIC · WebTransport · TCP · UDP
-```
-
----
-
-## Engineering Focus
-
-- Backend architecture with clear service boundaries
-- Distributed systems and event-driven platforms
-- High-throughput streaming and real-time communication
-- Performance profiling and latency optimization
-- Reusable SDKs and internal platform libraries
-- Clean, maintainable, production-grade code
-- Open-source tooling for .NET developers
-
----
-
-## Featured Open Source
+## Current projects
 
 ### ThunderPropagator
 
-**Multi-protocol .NET 10 streaming library**
+A multi-repository .NET 8/9/10 streaming project I've been building around channels, protocol contracts, data-source adapters, cluster messaging, recovery and client libraries.
 
-High-throughput streaming across:
+The public repositories are split by responsibility rather than putting everything in one package:
 
-```txt
-WebSockets · MQTT 5.0 · QUIC · WebTransport · TCP · UDP
-```
+- [ThunderPropagator.BuildingBlocks](https://github.com/KiarashMinoo/ThunderPropagator.BuildingBlocks) - shared abstractions and infrastructure
+- [ThunderPropagator.Channels](https://github.com/KiarashMinoo/ThunderPropagator.Channels) - chat, monitoring, notifications, demos and multiplayer/game channels
+- [ThunderPropagator.Feeviders](https://github.com/KiarashMinoo/ThunderPropagator.Feeviders) - adapters for Kafka, RabbitMQ, NATS, MQTT, Pulsar, ActiveMQ, Redis, cloud messaging, gRPC, WebSocket, TCP/UDP and other transports
+- [ThunderPropagator.ClusterMessageBuses](https://github.com/KiarashMinoo/ThunderPropagator.ClusterMessageBuses) - pluggable inter-node message buses and fan-out implementations
+- [ThunderPropagator.RecoveryHandlers](https://github.com/KiarashMinoo/ThunderPropagator.RecoveryHandlers) - snapshot recovery with Redis, MongoDB and PostgreSQL
+- [ThunderPropagator.Clients](https://github.com/KiarashMinoo/ThunderPropagator.Clients) - client protocol and wire-format specification
+- [ThunderPropagator.Clients.DotNet](https://github.com/KiarashMinoo/ThunderPropagator.Clients.DotNet) - .NET client implementation
 
-Built around protocol abstraction, subscriptions, channels, and **Feeviders** — domain-specific data source providers such as Kafka, RabbitMQ, NATS, TCP, and UDP. Multi-language client libraries for JS, Python, Go, Rust, Swift, and more.
-
-> Flagship open-source project, published to NuGet, with 970+ commits across a multi-repository structure.
-
----
-
-### LicenseManager
-
-**Cross-platform licensing toolkit**
-
-Native license validation through C/C++ core libraries with C# P/Invoke bindings. Hardware-bound key generation for:
-
-```txt
-Windows · macOS · Linux · ARM64
-```
-
----
+Recent Channels work includes server-authoritative session state, reconnect handling, scoring and request authorization for a real-time quiz channel, with concurrency and serialization tests around the state transitions.
 
 ### IIIF.Manifest.Serializer.Net
 
-**IIIF manifest serialization library**
+[IIIF.Manifest.Serializer.Net](https://github.com/KiarashMinoo/IIIF.Manifest.Serializer.Net) is a version-aware .NET serializer for IIIF Presentation API 2.0, 2.1 and 3.0.
 
-Full-spec .NET library for IIIF Presentation API 2.0 with fluent API, dirty-field change tracking, and multi-language metadata support.
+The current codebase includes:
 
-```txt
-Auth API 1.0/2.0 · Georeference · Content State · Discovery API
-```
+- IIIF Presentation, Image, Auth, Content Search, Change Discovery and Content State models
+- W3C-style annotations and version conversion
+- navPlace, Georeference and Text Granularity extension packages
+- `System.Text.Json` interoperability
+- 557 unit tests plus 8 architecture tests
+- roughly 82% line coverage for the core and extension packages
 
----
+I've also been using the SDK to explore different persistence and change-tracking approaches:
 
-### Other Projects
+- [IIIF.POC.ChangeTrackingLab](https://github.com/KiarashMinoo/IIIF.POC.ChangeTrackingLab) - object-graph changes and partial change sets
+- [IIIF.POC.PostgreSqlRelationalV3Store](https://github.com/KiarashMinoo/IIIF.POC.PostgreSqlRelationalV3Store) - EF Core/PostgreSQL relational mapping with JSONB for extension data
+- [IIIF.POC.EventSourcedManifestStore](https://github.com/KiarashMinoo/IIIF.POC.EventSourcedManifestStore) - append-only event streams with KurrentDB
+- [IIIF.POC.VersionLab](https://github.com/KiarashMinoo/IIIF.POC.VersionLab) - Presentation 2.x/3.0 detection and conversion
 
-- **BlockChainLogging** — tamper-proof audit trail
-- **CaptchaWithSkiaSharp** — CAPTCHA generation with SkiaSharp
-- **PasswordGeneratorCLI** — secure password generator CLI
-- **ZooKeeperDITester** — ZooKeeper diagnostic and integration testing utility
+### MinooTrading
 
----
+I'm also working on a private .NET 10 modular business platform under [MinooTradingSPC](https://github.com/MinooTradingSPC). It covers areas such as accounting, billing, IAM, audit, customer/product/order management, notifications, search and scheduling, with shared CQRS, security, rate-limiting, export and workflow components.
 
-## Experience Highlights
+The persistence layer is deliberately provider-oriented, with support across SQL Server, PostgreSQL, MySQL and SQLite where the module allows it.
 
-### Asl Al-Uroba  
-**Senior .NET Backend / Full-Stack Developer · 2025–Present**
+## Other repositories
 
-ABP-based higher education platforms for admissions, SDK infrastructure, and college admission workflows.
+- [BlockChainLogging](https://github.com/KiarashMinoo/BlockChainLogging) - append-only/tamper-evident logging experiment
+- [CaptchaWithSkiaSharp](https://github.com/KiarashMinoo/CaptchaWithSkiaSharp) - CAPTCHA image generation with SkiaSharp
+- [PasswordGeneratorCLI](https://github.com/KiarashMinoo/PasswordGeneratorCLI) - password generation library and CLI
+- [ZooKeeperDITester](https://github.com/KiarashMinoo/ZooKeeperDITester) - distributed locking/DI experiment with ZooKeeper
+- [awesome-iiif](https://github.com/KiarashMinoo/awesome-iiif) - IIIF resources and references
 
-```txt
-AAU SDK · Admissions Platform · College Admission System
-```
+## Work background
 
-### Creative Advanced Technology, Dubai
+**Asl Al-Uroba · Senior .NET Full-Stack Developer · 2025-present**  
+College admission and postgraduate systems, ABP/ASP.NET Core, PostgreSQL, Redis, Angular, caching, identity, background processing and internal .NET packages.
 
-Fiber-optic microservices, EarthLink Iraq Creatio systems, and .NET MAUI exam platforms via RabbitMQ-based integration.
+**Creative Advanced Technologies · Senior Software Developer · 2022-2024**  
+EarthLink Iraq fibre-optic service systems, university software and a .NET MAUI exam engine.
 
----
+**Alo Application · .NET Back-End Developer / Team Lead · 2021-2022**  
+Real-time stock trading, Kafka, Lightstreamer and performance-sensitive market-data processing.
 
-### Alo Application
+Before that I worked on MVNO/telecom systems, insurance, retail and manufacturing software, government tax services, travel software and real-estate systems.
 
-Custom MMTP binary market-feed deserializer optimized to **~44ns parse time** — ~700x faster than baseline — enabling **500K+ Kafka messages per second** on a live trading platform.
+## Writing
 
----
+I write about problems I've run into while building .NET systems, especially concurrency, messaging, security and performance.
 
-### Netap / Asanpardakht
-
-MVNO, insurance, and NetSIM B2C platforms with scalable microservice-based architecture.
-
----
-
-### BISTCO
-
-```txt
-Easy EyeCheckUp · Easy Dicom v3.1.0 · Dicomizer · Falcon Microscope Streamer
-```
-
----
-
-### Earlier Experience
-
-E-government platforms, RFID tracking systems, real-estate MIS platforms, and high-volume batch-processing systems.
-
-```txt
-5M+ vehicle records processed
-Batch processing reduced from 8 hours to 90 minutes
-```
-
----
-
-## Technical Writing
-
-- Google reCAPTCHA in C#
-- Backend architecture patterns
-- Performance optimization
-- Open-source engineering
-- Distributed systems and event-driven design
-
----
-
-## Professional Principles
-
-```txt
-Design for maintainability.
-Optimize only where it matters.
-Keep boundaries explicit.
-Prefer simple systems that scale.
-Build reusable platform capabilities.
-Measure before tuning.
-```
-
----
+- [Medium](https://ahmadminoo.medium.com)
 
 ## Contact
 
-- **Website:** [kiarashminoo.com](https://kiarashminoo.com)
-- **GitHub:** [github.com/KiarashMinoo](https://github.com/KiarashMinoo)
-- **LinkedIn:** [linkedin.com/in/ahmadminoo](https://linkedin.com/in/ahmadminoo)
-- **Medium:** [ahmadminoo.medium.com](https://ahmadminoo.medium.com)
-- **Email:** [ahmadminoo@gmail.com](mailto:ahmadminoo@gmail.com)
+- Website: [kiarashminoo.com](https://kiarashminoo.com)
+- LinkedIn: [linkedin.com/in/ahmadminoo](https://linkedin.com/in/ahmadminoo)
+- GitHub: [github.com/KiarashMinoo](https://github.com/KiarashMinoo)
+- Email: [ahmadminoo@gmail.com](mailto:ahmadminoo@gmail.com)
 
----
-
-> Senior backend work, relocation opportunities, open-source collaboration, and technical partnerships are welcome.
+I'm open to senior backend/platform roles, remote work, relocation, and open-source collaboration.

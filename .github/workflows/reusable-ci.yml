@@ -114,6 +114,22 @@ on:
         description: Optional newline/comma-separated list of explicit .csproj paths to pack instead of the whole solution (use when Directory.Build.props sets IsPackable=true globally, so a solution-wide pack would also try to pack test/example projects). No-op when empty.
         type: string
         default: ''
+      nuget-api-key-2-prefix:
+        description: >
+          Package filename prefix (a plain string match, e.g. 'ThunderPropagator.Feeders') routed
+          to secrets.nuget-api-key-2 instead of the default secrets.nuget-api-key, for classic
+          nuget.org publishing only. Left empty (the default), routing is disabled and every
+          package uses secrets.nuget-api-key as before.
+        type: string
+        default: ''
+      nuget-api-key-3-prefix:
+        description: Same as nuget-api-key-2-prefix, routed to secrets.nuget-api-key-3. Left empty (the default), routing is disabled.
+        type: string
+        default: ''
+      nuget-api-key-4-prefix:
+        description: Same as nuget-api-key-2-prefix, routed to secrets.nuget-api-key-4. Left empty (the default), routing is disabled.
+        type: string
+        default: ''
     secrets:
       gh-token:
         description: GitHub token for pushing the version/changelog commit, tagging, creating the Release, and artifact cleanup
@@ -134,7 +150,25 @@ on:
           automated commit push through as that account instead.
         required: false
       nuget-api-key:
-        description: Classic NuGet.org API key (nuget.org > API Keys), used when nuget-target is nuget.org and nuget-auth-mode is 'classic' (the default).
+        description: >
+          Classic NuGet.org API key (nuget.org > API Keys), used when nuget-target is nuget.org
+          and nuget-auth-mode is 'classic' (the default). Also the fallback/default key for any
+          package whose filename doesn't match nuget-api-key-2-prefix, nuget-api-key-3-prefix,
+          or nuget-api-key-4-prefix below, when those are set.
+        required: false
+      nuget-api-key-2:
+        description: >
+          Optional second classic NuGet.org API key, used only for packages whose filename
+          starts with nuget-api-key-2-prefix -- lets a repo that publishes several distinct
+          package-ID families (e.g. one owner-scoped key per family) split its push volume
+          across independent 350/hour-per-key quota buckets instead of sharing one. Ignored
+          entirely when nuget-api-key-2-prefix is left empty.
+        required: false
+      nuget-api-key-3:
+        description: Same as nuget-api-key-2, but paired with nuget-api-key-3-prefix. Ignored entirely when nuget-api-key-3-prefix is left empty.
+        required: false
+      nuget-api-key-4:
+        description: Same as nuget-api-key-2, but paired with nuget-api-key-4-prefix. Ignored entirely when nuget-api-key-4-prefix is left empty.
         required: false
       nuget-user:
         description: NuGet.org profile name for Trusted Publishing OIDC login, used only when nuget-target is nuget.org and nuget-auth-mode is 'oidc'. See that input's description for why OIDC doesn't currently work from here.
@@ -226,7 +260,23 @@ jobs:
         if: inputs.create-github-release && steps.committag.outputs.tag != ''
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.gh-token }}
+          # Same push-token-with-fallback pattern as the Checkout step above.
+          # `gh release create` needs to (re-)create the tag ref via the REST
+          # API when it doesn't see it yet (eventual consistency right after
+          # the git push above), and that tag-ref creation is subject to the
+          # same tag/branch protection as a normal git push -- so it needs
+          # the same bypass-capable identity, not just contents:write.
+          # Without this, repos with protection rules that exclude the
+          # default github-actions[bot] identity get "HTTP 403: Resource not
+          # accessible by integration" here even though the git push and
+          # `contents: write` permission both succeeded fine.
+          GH_TOKEN: ${{ secrets.push-token != '' && secrets.push-token || secrets.gh-token }}
+          # Surface full request/response detail (headers + body) on stderr if this
+          # step fails again. A prior failure here returned a completely bodyless
+          # "HTTP 500" with no diagnostic info at all -- this is what would let us
+          # see the actual response (or confirm GitHub genuinely returned nothing)
+          # instead of guessing blind next time.
+          GH_DEBUG: api
         run: |
           TAG="${{ steps.committag.outputs.tag }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -234,11 +284,40 @@ jobs:
           else
             PRERELEASE_FLAG=()
             if [ "${{ inputs.channel }}" = "beta" ]; then PRERELEASE_FLAG=(--prerelease); fi
-            gh release create "$TAG" \
+            # Truncate release-notes.md to stay under GitHub's 125k-char API limit
+            MAX=124900
+            if [ "$(wc -c < release-notes.md)" -gt "$MAX" ]; then
+              head -c $MAX release-notes.md > /tmp/rn-trunc.md
+              printf '\n\n_Release notes truncated. See CHANGELOG.md for full history._\n' >> /tmp/rn-trunc.md
+              mv /tmp/rn-trunc.md release-notes.md
+            fi
+            echo "release-notes.md: $(wc -c < release-notes.md) bytes, $(file -b release-notes.md)"
+            # GitHub's release-creation endpoint has been observed to return a bare,
+            # bodyless "HTTP 500" right after the tag was just pushed (transient
+            # server-side hiccup, not a real conflict) -- retry a few times with
+            # backoff. Re-check for the release before each retry in case a prior
+            # attempt actually succeeded server-side despite the error response,
+            # so a retry after that never fails on a spurious "already exists".
+            max_attempts=4
+            attempt=1
+            until gh release create "$TAG" \
               --title "$TAG" \
               --notes-file release-notes.md \
               --target "${{ steps.committag.outputs.sha }}" \
-              "${PRERELEASE_FLAG[@]}"
+              "${PRERELEASE_FLAG[@]}"; do
+              if gh release view "$TAG" >/dev/null 2>&1; then
+                echo "Release $TAG now exists (a prior attempt likely succeeded despite an error response); continuing."
+                break
+              fi
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "::error::Creating release $TAG failed after $max_attempts attempts."
+                exit 1
+              fi
+              delay=$((10 * attempt))
+              echo "::warning::Create GitHub Release attempt $attempt/$max_attempts failed — retrying in ${delay}s"
+              sleep "$delay"
+              attempt=$((attempt + 1))
+            done
           fi
 
   # --- 2) build -> optional test -> pack matrix & upload artifacts ---
@@ -274,7 +353,7 @@ jobs:
           pwsh ./.ci-scripts/.github/scripts/show-version.ps1
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-versions }}
 
@@ -332,6 +411,26 @@ jobs:
             Write-Host "::warning::Build attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) — retrying in ${delay}s"
             Start-Sleep -Seconds $delay
           }
+      # Auto-detected, not a switch: a repo opts in just by committing an obfuscar.xml at
+      # its root, no separate boolean input exists for this anywhere in this workflow.
+      # Runs after Build (so there's something to obfuscate) and before Pack (which packs
+      # with --no-build, so obfuscating in place here is enough -- no change needed to
+      # pack-solution.ps1 itself). Skipped for Debug builds -- obfuscation is a shipping
+      # concern, and Debug is never what gets published. See
+      # Invoke-ObfuscateAssemblies.ps1 for how a single repo-committed config gets applied
+      # correctly across every Platform x Configuration x TFM combination this matrix
+      # builds.
+      - name: Obfuscate assemblies (if configured)
+        if: matrix.configuration != 'Debug' && hashFiles('obfuscar.xml') != ''
+        shell: pwsh
+        run: |
+          if (-not (Test-Path '.config/dotnet-tools.json')) {
+            throw "obfuscar.xml is present but no .config/dotnet-tools.json local tool manifest was found. Commit one (dotnet new tool-manifest && dotnet tool install obfuscar.globaltool) so the obfuscator version is pinned in-repo."
+          }
+          dotnet tool restore
+          pwsh ./.ci-scripts/.github/scripts/Invoke-ObfuscateAssemblies.ps1 `
+            -Configuration "${{ matrix.configuration }}" `
+            -Platform "${{ matrix.platform_in }}"
 
       - name: Run tests
         if: inputs.test-command != ''
@@ -448,7 +547,7 @@ jobs:
           merge-multiple: true
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
 
@@ -471,7 +570,31 @@ jobs:
               local status=$?
               echo "$output"
               if [ $status -eq 0 ]; then
+                # Pace successful pushes: this loop can push 100+ packages back-to-back in
+                # well under a second apart, which is exactly what tripped nuget.org's push
+                # quota (see the "Quota Exceeded" handling below) even though every individual
+                # push succeeded. A short, fixed sleep here spreads the whole run out in
+                # exchange for a real chance of not hitting that quota at all -- cheap
+                # insurance against a much more expensive full-job failure.
+                sleep 0.5
                 return 0
+              fi
+              # A 403 carrying "Quota Exceeded" is NuGet.org's push-rate quota, not the brief
+              # auth/permission-propagation lag this retry loop was designed for: NuGet's own
+              # "retry after" on this response is measured in tens of minutes, not seconds, so
+              # burning all 5 attempts across ~75s of backoff can never succeed -- it only
+              # wastes CI time before failing anyway. Fail fast instead, with a clear,
+              # actionable message. --skip-duplicate above means a later re-run of this same
+              # job harmlessly skips everything already pushed and resumes from here.
+              if echo "$output" | grep -qi 'Quota Exceeded'; then
+                local retry_after wait_msg
+                retry_after=$(echo "$output" | grep -oE 'retry after: [0-9]+s' | grep -oE '[0-9]+' | head -1)
+                wait_msg="a while"
+                if [ -n "$retry_after" ]; then
+                  wait_msg="~$((retry_after / 60)) minute(s)"
+                fi
+                echo "::error::NuGet.org push quota exceeded for $(basename "$file") -- wait $wait_msg and re-run this job (already-pushed packages are skipped via --skip-duplicate)."
+                return 1
               fi
               if echo "$output" | grep -qE 'indicate success: (403|429)'; then
                 if [ $attempt -ge $max_attempts ]; then
@@ -487,6 +610,33 @@ jobs:
               return $status
             done
           }
+
+          # Package-family key routing (classic nuget.org publish only): picks
+          # NUGET_API_KEY_2/_3/_4 over the default NUGET_API_KEY when the package's filename
+          # starts with the corresponding NUGET_API_KEY_2/_3/_4_PREFIX env var, so a repo that
+          # publishes several distinct package-ID families can spread pushes across several
+          # independent 350/hour-per-key nuget.org quota buckets instead of exhausting one
+          # shared key. NuGet's own pack output names files "{PackageId}.{Version}.{ext}", and
+          # a plain startswith check against the pre-version portion is unambiguous here even
+          # though PackageId/Version can each contain dots -- the prefixes in play (e.g.
+          # "ThunderPropagator.Feeders" vs "ThunderPropagator.Providers" vs
+          # "ThunderPropagator.Feeviders") never share a common leading substring with one
+          # another, so there's no risk of one prefix accidentally matching another family.
+          # A _PREFIX left empty disables that slot entirely -- everything then falls through
+          # to the default key, exactly as before this routing existed.
+          select_api_key() {
+            local filename
+            filename="$(basename "$1")"
+            if [ -n "${NUGET_API_KEY_2_PREFIX:-}" ] && [[ "$filename" == "$NUGET_API_KEY_2_PREFIX"* ]]; then
+              echo "$NUGET_API_KEY_2"
+            elif [ -n "${NUGET_API_KEY_3_PREFIX:-}" ] && [[ "$filename" == "$NUGET_API_KEY_3_PREFIX"* ]]; then
+              echo "$NUGET_API_KEY_3"
+            elif [ -n "${NUGET_API_KEY_4_PREFIX:-}" ] && [[ "$filename" == "$NUGET_API_KEY_4_PREFIX"* ]]; then
+              echo "$NUGET_API_KEY_4"
+            else
+              echo "$NUGET_API_KEY"
+            fi
+          }
           EOF
 
       - name: NuGet login (OIDC to temp API key — Trusted Publishing)
@@ -501,14 +651,20 @@ jobs:
         shell: bash
         env:
           NUGET_API_KEY: ${{ secrets.nuget-api-key }}
+          NUGET_API_KEY_2: ${{ secrets.nuget-api-key-2 }}
+          NUGET_API_KEY_3: ${{ secrets.nuget-api-key-3 }}
+          NUGET_API_KEY_4: ${{ secrets.nuget-api-key-4 }}
+          NUGET_API_KEY_2_PREFIX: ${{ inputs.nuget-api-key-2-prefix }}
+          NUGET_API_KEY_3_PREFIX: ${{ inputs.nuget-api-key-3-prefix }}
+          NUGET_API_KEY_4_PREFIX: ${{ inputs.nuget-api-key-4-prefix }}
         run: |
           source "$RUNNER_TEMP/push-with-retry.sh"
           shopt -s nullglob
           for package in ./dist/packages/*.nupkg; do
-            push_with_retry "$package" https://api.nuget.org/v3/index.json "$NUGET_API_KEY" || exit 1
+            push_with_retry "$package" https://api.nuget.org/v3/index.json "$(select_api_key "$package")" || exit 1
           done
           for symbols in ./dist/symbols/*.snupkg; do
-            push_with_retry "$symbols" https://api.nuget.org/v3/index.json "$NUGET_API_KEY" || exit 1
+            push_with_retry "$symbols" https://api.nuget.org/v3/index.json "$(select_api_key "$symbols")" || exit 1
           done
 
       - name: Publish packages to NuGet.org (OIDC Trusted Publishing)
