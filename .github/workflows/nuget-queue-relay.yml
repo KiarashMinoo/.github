@@ -9,7 +9,7 @@ name: NuGet Queue Relay
 # repos are unaffected: they still push directly, under their own repo-scoped OIDC
 # identity, exactly as before this existed.
 #
-# Flow: discover lists every not-yet-relayed pkg-* artifact across the family
+# Flow: discover lists every not-yet-relayed nuget-queue-* artifact across the family
 # repos below (via a cross-repo token, since Actions artifacts are per-repo) and sorts
 # by created_at ascending for FIFO. relay then processes them one at a time (matrix,
 # max-parallel: 1 -- deliberate, not a limitation: these all share one quota bucket, so
@@ -22,7 +22,7 @@ name: NuGet Queue Relay
 #
 # One-time setup (nothing here or Claude can do this on your behalf):
 #   1. nuget.org: account > Trusted Publishing > Add -- Repository Owner=KiarashMinoo,
-#      Repository=.github, Workflow File=pkg-relay.yml (leave Environment
+#      Repository=.github, Workflow File=nuget-queue-relay.yml (leave Environment
 #      blank -- this workflow declares none). Add a NUGET_USER secret on this repo (the
 #      nuget.org username that policy is attached to), same concept as every family
 #      repo's own NUGET_USER secret, just a separate policy scoped to this repo+file.
@@ -60,7 +60,7 @@ jobs:
       items: ${{ steps.list.outputs.items }}
       has-items: ${{ steps.list.outputs.has-items }}
     steps:
-      - name: List pending pkg-* artifacts across family repos (FIFO order)
+      - name: List pending nuget-queue-* artifacts across family repos (FIFO order)
         id: list
         shell: bash
         env:
@@ -70,7 +70,7 @@ jobs:
           : > artifacts.ndjson
           for repo in $FAMILY_REPOS; do
             gh api "repos/$OWNER/$repo/actions/artifacts" --paginate \
-              --jq ".artifacts[] | select(.name | startswith(\"pkg-\")) | select(.expired == false) | {repo: \"$repo\", id: .id, name: .name, created_at: .created_at}" \
+              --jq ".artifacts[] | select(.name | startswith(\"nuget-queue-\")) | select(.expired == false) | {repo: \"$repo\", id: .id, name: .name, created_at: .created_at}" \
               >> artifacts.ndjson || echo "::warning::Failed to list artifacts for $repo -- skipping this run, will retry next tick"
           done
 
