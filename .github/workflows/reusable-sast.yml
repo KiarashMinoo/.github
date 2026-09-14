@@ -82,7 +82,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run TruffleHog
-        uses: trufflesecurity/trufflehog@v3.95.9
+        uses: trufflesecurity/trufflehog@v3.97.4
         with:
           path: ./
           base: ${{ github.event.before != '0000000000000000000000000000000000000000' && github.event.before || '' }}
@@ -109,7 +109,7 @@ jobs:
 
       - name: Setup .NET (GitHub Packages NuGet auth)
         if: ${{ matrix.language == 'csharp' && inputs.nuget-source-url != '' }}
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-versions }}
           source-url: ${{ inputs.nuget-source-url }}
@@ -137,7 +137,7 @@ jobs:
 
       - name: Setup .NET
         if: ${{ matrix.language == 'csharp' && inputs.codeql-build-mode == 'manual' }}
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-versions }}
           source-url: ${{ inputs.nuget-source-url != '' && inputs.nuget-source-url || null }}

@@ -353,7 +353,7 @@ jobs:
           pwsh ./.ci-scripts/.github/scripts/show-version.ps1
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-versions }}
 
@@ -411,7 +411,6 @@ jobs:
             Write-Host "::warning::Build attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) — retrying in ${delay}s"
             Start-Sleep -Seconds $delay
           }
-
       # Auto-detected, not a switch: a repo opts in just by committing an obfuscar.xml at
       # its root, no separate boolean input exists for this anywhere in this workflow.
       # Runs after Build (so there's something to obfuscate) and before Pack (which packs
@@ -548,7 +547,7 @@ jobs:
           merge-multiple: true
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
 
