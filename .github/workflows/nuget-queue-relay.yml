@@ -1,0 +1,143 @@
+name: NuGet Queue Relay
+
+# Pulls queued package payloads from every family repo's AUTOMATED CI runs (uploaded by
+# nuget-oidc-publish/action.yml's mode: queue -- see that file's header comment for the
+# whole design) and pushes them to nuget.org one at a time, oldest first, under THIS
+# repo's own OIDC identity -- collapsing every automated repo's pushes onto a single
+# deliberately-paced queue against nuget.org's shared account-wide push-rate quota,
+# instead of N repos independently racing it. Manual (workflow_dispatch) runs in family
+# repos are unaffected: they still push directly, under their own repo-scoped OIDC
+# identity, exactly as before this existed.
+#
+# Flow: discover lists every not-yet-relayed nuget-queue-* artifact across the family
+# repos below (via a cross-repo token, since Actions artifacts are per-repo) and sorts
+# by created_at ascending for FIFO. relay then processes them one at a time (matrix,
+# max-parallel: 1 -- deliberate, not a limitation: these all share one quota bucket, so
+# "FIFO" only means anything if they're actually pushed in that order, not fired at
+# nuget.org concurrently) -- download the still-compressed payload, decompress it only
+# now, push it, and only delete it from the source repo once the push actually
+# succeeded (a failed push, including a real quota-exceeded, just leaves it queued for
+# the next run 20 minutes later -- --skip-duplicate inside nuget-oidc-publish makes a
+# repeated push of an already-pushed package harmless).
+#
+# One-time setup (nothing here or Claude can do this on your behalf):
+#   1. nuget.org: account > Trusted Publishing > Add -- Repository Owner=KiarashMinoo,
+#      Repository=.github, Workflow File=nuget-queue-relay.yml (leave Environment
+#      blank -- this workflow declares none). Add a NUGET_USER secret on this repo (the
+#      nuget.org username that policy is attached to), same concept as every family
+#      repo's own NUGET_USER secret, just a separate policy scoped to this repo+file.
+#   2. A fine-grained Personal Access Token with Actions read-and-write permission on
+#      exactly the 9 family repos listed in FAMILY_REPOS below (private repos must be
+#      selected explicitly -- a fine-grained PAT has no implicit "all repos I can see"
+#      default the way a classic PAT does), stored here as the QUEUE_RELAY_TOKEN
+#      secret. Deliberately narrower than a contents-write PAT: it can only
+#      list/download/delete Actions artifacts in those repos, nothing else -- it never
+#      touches source, branches, or releases.
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch: {}
+
+env:
+  FAMILY_REPOS: >-
+    ThunderPropagator
+    ThunderPropagator.BuildingBlocks
+    ThunderPropagator.Channels
+    ThunderPropagator.Clients.DotNet
+    ThunderPropagator.ClusterMessageBuses
+    ThunderPropagator.Feeviders
+    ThunderPropagator.FormatSerializers
+    ThunderPropagator.RecoveryHandlers
+    ThunderPropagator.SubscriptionMessageFormatters
+
+jobs:
+  discover:
+    name: Find queued payloads
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      items: ${{ steps.list.outputs.items }}
+      has-items: ${{ steps.list.outputs.has-items }}
+    steps:
+      - name: List pending nuget-queue-* artifacts across family repos (FIFO order)
+        id: list
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.QUEUE_RELAY_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          : > artifacts.ndjson
+          for repo in $FAMILY_REPOS; do
+            gh api "repos/$OWNER/$repo/actions/artifacts" --paginate \
+              --jq ".artifacts[] | select(.name | startswith(\"nuget-queue-\")) | select(.expired == false) | {repo: \"$repo\", id: .id, name: .name, created_at: .created_at}" \
+              >> artifacts.ndjson || echo "::warning::Failed to list artifacts for $repo -- skipping this run, will retry next tick"
+          done
+
+          if [ ! -s artifacts.ndjson ]; then
+            echo "No queued payloads found in any family repo."
+            echo "items=[]" >> "$GITHUB_OUTPUT"
+            echo "has-items=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Oldest created_at first (FIFO). Capped at 50 items so one relay run can't
+          # try to process an unbounded backlog -- the next cron tick (20 min later)
+          # picks up whatever's left.
+          jq -s 'sort_by(.created_at) | .[0:50]' artifacts.ndjson > items.json
+          count=$(jq 'length' items.json)
+          echo "Found $count queued payload(s) to relay this run."
+          echo "items=$(jq -c '.' items.json)" >> "$GITHUB_OUTPUT"
+          if [ "$count" -gt 0 ]; then
+            echo "has-items=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-items=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  relay:
+    name: Push ${{ matrix.item.repo }} / ${{ matrix.item.name }}
+    needs: discover
+    if: needs.discover.outputs.has-items == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      # Sequential, not parallel: every item here shares ONE nuget.org quota bucket
+      # (this repo's own OIDC identity), and FIFO ordering only means anything if items
+      # are actually pushed one at a time in the order discover sorted them.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        item: ${{ fromJson(needs.discover.outputs.items) }}
+    steps:
+      - name: Download queued payload (still compressed)
+        env:
+          GH_TOKEN: ${{ secrets.QUEUE_RELAY_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          gh api "repos/$OWNER/${{ matrix.item.repo }}/actions/artifacts/${{ matrix.item.id }}/zip" > payload.zip
+          unzip -o payload.zip -d payload_extracted
+          mkdir -p ./dist
+          # Decompressed only now, right before the push step below -- everything
+          # upstream of this line (upload in the family repo, storage, this download)
+          # stayed compressed.
+          tar -xzf payload_extracted/*.tar.gz -C ./dist
+
+      - name: Push to NuGet.org (OIDC Trusted Publishing)
+        uses: KiarashMinoo/.github/.github/actions/nuget-oidc-publish@main
+        with:
+          mode: push-local
+          nuget-user: ${{ secrets.NUGET_USER }}
+
+      - name: Delete relayed artifact from source repo
+        # No explicit if: -- this step is skipped by default if the push step above
+        # failed, which is exactly what should happen: a failed push (including a real
+        # quota-exceeded) leaves the artifact queued for the next cron tick to retry,
+        # rather than losing the only copy of an unpushed package.
+        env:
+          GH_TOKEN: ${{ secrets.QUEUE_RELAY_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          gh api "repos/$OWNER/${{ matrix.item.repo }}/actions/artifacts/${{ matrix.item.id }}" -X DELETE
