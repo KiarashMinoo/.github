@@ -20,6 +20,24 @@ name: NuGet Queue Relay
 # the next run 20 minutes later -- --skip-duplicate inside nuget-oidc-publish makes a
 # repeated push of an already-pushed package harmless).
 #
+# Reliability (added 2026-09-14): GitHub's native `schedule:` trigger below is kept as
+# the intended, declarative "every 20 minutes" cadence, but GitHub documents it as
+# best-effort -- a freshly added/changed cron can take a while before GitHub's own
+# scheduler infrastructure starts reliably firing it, and even once warmed up, ticks
+# "can be delayed during periods of high loads of GitHub Actions workflow runs." That's
+# not good enough for something meant to behave like an always-on service, so the
+# reschedule job below makes this workflow self-perpetuating: every run, regardless of
+# outcome, waits ~20 minutes and then re-triggers a fresh run of this same workflow via
+# the API. Once any single run ever executes -- via schedule, a manual dispatch, or a
+# prior link in this same chain -- the chain keeps itself alive indefinitely, so actual
+# execution no longer depends on GitHub's cron scheduler ever ticking on time. The
+# native schedule trigger stays in place purely as a redundant bootstrap: if the chain
+# is ever broken (a run cancelled mid-wait, a bad deploy, etc.), the next scheduled tick
+# (whenever GitHub gets to it) starts a fresh chain on its own, with no manual step
+# needed. Overlap between the two is safe: discover/relay are idempotent
+# (--skip-duplicate on the eventual push, artifacts only deleted after a successful
+# push), so a redundant simultaneous run just does harmless extra work.
+#
 # One-time setup (nothing here or Claude can do this on your behalf):
 #   1. nuget.org: account > Trusted Publishing > Add -- Repository Owner=KiarashMinoo,
 #      Repository=.github, Workflow File=nuget-queue-relay.yml (leave Environment
@@ -141,3 +159,38 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: |
           gh api "repos/$OWNER/${{ matrix.item.repo }}/actions/artifacts/${{ matrix.item.id }}" -X DELETE
+
+  reschedule:
+    name: Reschedule next run
+    needs: [discover, relay]
+    # always(): must run regardless of whether discover found nothing (relay then
+    # legitimately skipped), or relay partially/fully failed -- the whole point is that
+    # this chain never stops on its own, the same way a real service wouldn't.
+    if: always()
+    runs-on: ubuntu-latest
+    # Comfortably above the ~20-minute sleep below plus setup/API-call overhead.
+    timeout-minutes: 25
+    permissions:
+      actions: write
+    steps:
+      - name: Wait ~20 minutes, then trigger the next run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 1200
+
+          # Best-effort with a few retries -- if this ultimately still fails (a
+          # transient API hiccup, a token/permissions problem, etc.), don't fail this
+          # job loudly: the native schedule trigger above is still in place and will
+          # re-bootstrap a fresh chain on its own next tick, so there's no real chain
+          # break, just a delay.
+          attempt=1
+          until gh workflow run nuget-queue-relay.yml --ref main -R "${{ github.repository }}"; do
+            if [ "$attempt" -ge 3 ]; then
+              echo "::warning::Failed to self-trigger the next run after 3 attempts -- relying on the native schedule trigger to recover within its own cycle."
+              exit 0
+            fi
+            echo "::warning::Self-trigger attempt $attempt failed -- retrying in 10s"
+            sleep 10
+            attempt=$((attempt + 1))
+          done
