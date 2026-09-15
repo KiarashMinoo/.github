@@ -57,6 +57,20 @@ on:
     - cron: '*/20 * * * *'
   workflow_dispatch: {}
 
+# Enforces a single lineage: at most one run of this workflow is ever "in progress",
+# and at most one more is "queued" behind it (GitHub collapses any additional queued
+# runs sharing this group down to just the latest one). Fixes a real failure mode where
+# more than one run reached the self-triggering reschedule job below (e.g. two manual
+# test runs both landing on the version with reschedule added) and each one started its
+# own independent ~20-minute chain, running forever in parallel and offset from each
+# other -- this group makes every trigger (schedule, manual, or a chain's own
+# self-dispatch) serialize onto one lineage instead. cancel-in-progress: false on
+# purpose -- a newly queued run should wait its turn, not kill a run that's actively
+# mid-relay or mid-push.
+concurrency:
+  group: nuget-queue-relay
+  cancel-in-progress: false
+
 env:
   FAMILY_REPOS: >-
     ThunderPropagator
@@ -177,7 +191,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sleep 1200
+          # A single `sleep 1200` doesn't respond to a workflow cancellation request
+          # reliably in practice (confirmed: cancelling a run stuck in a single long
+          # sleep left it "In progress" well past GitHub's normal grace period). Looping
+          # many short sleeps instead gives the runner a fresh process to interrupt
+          # every few seconds, so a cancel request actually takes effect promptly
+          # instead of being stuck for the full 20 minutes.
+          for _ in $(seq 1 240); do
+            sleep 5
+          done
 
           # Best-effort with a few retries -- if this ultimately still fails (a
           # transient API hiccup, a token/permissions problem, etc.), don't fail this
