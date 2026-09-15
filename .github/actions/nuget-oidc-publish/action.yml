@@ -75,8 +75,9 @@ inputs:
     description: >
       'push' (default) -- download, filter, OIDC-login, and push to nuget.org, exactly
       as before this input existed. 'queue' -- download and filter identically, but tar
-      +gzip the surviving set, upload it as one compressed artifact, then delete the
-      raw pkg-*/symbols-* artifacts from this run (now redundant) instead of logging in
+      +gzip the surviving set, upload it as one compressed artifact, then (unless
+      delete-raw-artifacts is set to 'false' -- see that input) delete the raw
+      pkg-*/symbols-* artifacts from this run (now redundant) instead of logging in
       or pushing at all; nuget-user is ignored in this mode. 'push-local' --
       same OIDC-login-and-push as 'push', but skips the download-artifact steps
       entirely and pushes whatever the caller already placed in ./dist/packages and
@@ -97,6 +98,26 @@ inputs:
       collides with a sibling's.
     required: false
     default: ''
+  delete-raw-artifacts:
+    description: >
+      When mode is 'queue' and a payload was actually uploaded, whether this job should
+      delete the raw pkg-*/symbols-* artifacts from this run afterward. Defaults to
+      'true', which is correct and safe for the common case: ONE publish job per repo
+      consuming the whole run's pkg-*/symbols-* output. It is NOT safe when a repo splits
+      publishing across SEVERAL sequential jobs that all download from the SAME shared
+      pkg-*/symbols-* artifacts (reusable-ci.yml packs every family's packages together
+      into one artifact per build leg, e.g. pkg-Release, not one artifact per package) --
+      see ThunderPropagator.Feeviders' 4-way split. There, the raw artifacts must survive
+      until the LAST job in the chain has downloaded and queued its own slice; deleting
+      them after the FIRST job (as every job used to do unconditionally) silently starves
+      every job after it -- each subsequent "Download all packages artifacts" step finds
+      nothing, so their filter step logs "nothing to queue" and their family's packages
+      are never queued or pushed at all, with no error raised anywhere. A caller that
+      splits publishing across N sequential jobs must set this to 'false' on the first
+      N-1 jobs' queue step and leave it 'true' (or unset) only on the LAST one, so
+      deletion happens exactly once, only after every job has safely extracted its slice.
+    required: false
+    default: 'true'
   nuget-user:
     description: >
       The nuget.org username the Trusted Publishing policy is attached to (pass
@@ -322,7 +343,7 @@ runs:
         if-no-files-found: error
 
     - name: "Delete raw packaging artifacts (mode: queue)"
-      if: inputs.mode == 'queue' && env.queue_has_payload == 'true'
+      if: inputs.mode == 'queue' && env.queue_has_payload == 'true' && inputs.delete-raw-artifacts == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -340,6 +361,15 @@ runs:
         # payload this same job just uploaded. Requires actions: write on the calling job
         # -- best-effort (a failed delete here doesn't fail the job; the artifact just
         # falls back to expiring on its own retention-days: 1).
+        #
+        # Gated on delete-raw-artifacts (see that input's own description): these
+        # artifacts are shared across every family package, not scoped to what THIS job
+        # happened to filter into its own payload -- reusable-ci.yml packs one artifact
+        # PER BUILD LEG containing every family's packages together, not one artifact per
+        # package. A caller splitting publishing across several sequential jobs (e.g.
+        # ThunderPropagator.Feeviders' 4-way split) must only let the LAST job in the
+        # chain reach this step with delete-raw-artifacts left 'true' -- deleting after
+        # the first job silently starves every job after it.
         packages_prefix="${PACKAGES_PATTERN%\*}"
         symbols_prefix="${SYMBOLS_PATTERN%\*}"
         gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --paginate \
