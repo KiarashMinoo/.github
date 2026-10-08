@@ -2,6 +2,8 @@
 
 Organization-level repository for shared GitHub Actions workflows and CI/CD infrastructure used across all ThunderPropagator repositories.
 
+[![Architecture diagram](https://gitdiagram.com/diagram-badge.svg)](https://gitdiagram.com/kiarashminoo/.github?utm_source=readme&utm_medium=badge)
+
 ## Purpose
 
 This repository centralizes reusable GitHub Actions workflows to avoid duplication across:
