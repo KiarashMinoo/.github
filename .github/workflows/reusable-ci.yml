@@ -399,16 +399,32 @@ jobs:
           # DNS blips, a runner-side hiccup) that have nothing to do with the code -- retry
           # a few times with backoff before failing this matrix leg outright, so one flaky
           # network moment doesn't force a manual re-run of the whole job.
+          #
+          # Special case -- upstream publish race: when a ThunderPropagator.* package this repo
+          # depends on was only just released, its newest beta may be visible on nuget.org for
+          # some package ids/platform variants but not yet others (publishes go through the
+          # FIFO NuGet queue relay, one package at a time, ~20 min cadence). That shows up as
+          # NU1102 on a ThunderPropagator.* id. It is not transient in seconds, so wait for the
+          # upstream packages to land (up to ~24 min) instead of failing the leg.
           $maxAttempts = 3
+          $log = Join-Path $env:RUNNER_TEMP 'pack-build.log'
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-            pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 @params
-            if ($LASTEXITCODE -eq 0) { exit 0 }
-            if ($attempt -ge $maxAttempts) {
-              Write-Host "::error::Build failed after $maxAttempts attempts (exit $LASTEXITCODE)."
-              exit $LASTEXITCODE
+            pwsh ./.ci-scripts/.github/scripts/pack-solution.ps1 @params 2>&1 | Tee-Object -FilePath $log
+            $code = $LASTEXITCODE
+            if ($code -eq 0) { exit 0 }
+            $upstreamRace = Select-String -Path $log -Pattern 'NU1102.*ThunderPropagator\.' -Quiet
+            if ($upstreamRace) {
+              $maxAttempts = 12
+              $delay = 120
+              Write-Host "::warning::Upstream ThunderPropagator package not on nuget.org yet (publish still queued); attempt $attempt/$maxAttempts, waiting ${delay}s"
+            } else {
+              $delay = 15 * $attempt
+              Write-Host "::warning::Build attempt $attempt/$maxAttempts failed (exit $code) — retrying in ${delay}s"
             }
-            $delay = 15 * $attempt
-            Write-Host "::warning::Build attempt $attempt/$maxAttempts failed (exit $LASTEXITCODE) — retrying in ${delay}s"
+            if ($attempt -ge $maxAttempts) {
+              Write-Host "::error::Build failed after $maxAttempts attempts (exit $code)."
+              exit $code
+            }
             Start-Sleep -Seconds $delay
           }
       # Auto-detected, not a switch: a repo opts in just by committing an obfuscar.xml at
