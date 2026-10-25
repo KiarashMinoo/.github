@@ -136,6 +136,48 @@ else {
     }
 }
 
+# Template mode: <Version> may be written as "$(ThunderPropagatorBaseVersion)-beta.N" (or just
+# "$(ThunderPropagatorBaseVersion)" after a release). The base lives in ONE place --
+# ThunderPropagator.SharedBuild/Shared.Build.props -- and is resolved here (fresh from the
+# SharedBuild repo, falling back to the restored .shared-props copy). In this mode the script
+# never bumps major/minor/patch itself: raising the base is a manual SharedBuild edit; CI only
+# manages the beta.N counter (beta => N+1, or beta.1 on a fresh base; release => strip suffix).
+$templateToken = '$(ThunderPropagatorBaseVersion)'
+$templateMode = $false
+$baseVer = ''
+if ($current.StartsWith($templateToken)) {
+    $rawBase = ''
+    $baseUrl = if ($env:SHARED_BUILD_BASE_URL) { $env:SHARED_BUILD_BASE_URL } else { 'https://raw.githubusercontent.com/KiarashMinoo/ThunderPropagator.SharedBuild/main' }
+    $baseRegex = '<ThunderPropagatorBaseVersion[^>]*>\s*(\d+\.\d+\.\d+(?:\.\d+)?)\s*</ThunderPropagatorBaseVersion>'
+    try {
+        $remote = (Invoke-WebRequest -UseBasicParsing -Uri ("$baseUrl/Shared.Build.props?cb=" + [DateTime]::UtcNow.Ticks)).Content
+        $bm = [regex]::Match($remote, $baseRegex)
+        if ($bm.Success) { $rawBase = $bm.Groups[1].Value }
+    }
+    catch { Write-Host "Could not fetch Shared.Build.props ($($_.Exception.Message)); trying local copy" -ForegroundColor Yellow }
+    if (-not $rawBase) {
+        $localShared = Join-Path (Split-Path -Parent (Resolve-Path $PropsPath)) '.shared-props/Shared.Build.props'
+        if (Test-Path $localShared) {
+            $bm = [regex]::Match((Get-Content -Raw $localShared), $baseRegex)
+            if ($bm.Success) { $rawBase = $bm.Groups[1].Value }
+        }
+    }
+    if (-not $rawBase) {
+        Write-Error 'Version uses $(ThunderPropagatorBaseVersion) but the base could not be resolved from SharedBuild.'
+        exit 6
+    }
+    $baseVer = $rawBase
+    $templateMode = $true
+    $current = $baseVer + $current.Substring($templateToken.Length)
+    Write-Host "Template mode: base $baseVer from SharedBuild; effective current version $current"
+}
+
+# Serialize a version for writing back: keep the base token when the version starts with the base.
+function Format-Written([string]$v) {
+    if ($templateMode -and $baseVer -and $v.StartsWith($baseVer)) { return $templateToken + $v.Substring($baseVer.Length) }
+    return $v
+}
+
 # Handle SetVersion mode (for syncing branches)
 if ($SetVersion) {
     $target = $SetVersion.Trim()
@@ -143,7 +185,7 @@ if ($SetVersion) {
         Write-Host ('Version already at ' + $target + '; no change needed.')
     }
     else {
-        $pkgNode.InnerText = $target
+        $pkgNode.InnerText = (Format-Written $target)
         $xml.Save($PropsPath)
         Write-Host ('Version updated: ' + $current + ' -> ' + $target)
     }
@@ -182,7 +224,56 @@ else {
     exit 5
 }
 
-if ($hasChannel -and $Channel -eq 'beta') {
+# Detect a manually raised base: if the base (major.minor.patch[.rev]) in <Version> is higher
+# than the base of the highest existing "$TagPrefix*" git tag, the maintainer already
+# increased the version by hand, so the beta must restart at beta.1 on that exact base --
+# not increment the old beta.N and not bump the component a second time. No tags / no git /
+# unparsable tags => $baseRaised stays $false and the original behavior applies unchanged.
+$baseRaised = $false
+if ($hasChannel -and $Channel -eq 'beta' -and -not $templateMode) {
+    try {
+        $curBase = [version]("{0}.{1}.{2}.{3}" -f $maj, $min, $bld, $rev)
+        $tagBases = @()
+        foreach ($t in @(& git tag --list "$TagPrefix*" 2>$null)) {
+            $tm = [regex]::Match([string]$t, '^' + [regex]::Escape($TagPrefix) + '(?<maj>\d+)\.(?<min>\d+)\.(?<bld>\d+)(?:\.(?<rev>\d+))?(?:-.+)?$')
+            if ($tm.Success) {
+                $r = if ($tm.Groups['rev'].Success) { $tm.Groups['rev'].Value } else { '0' }
+                $tagBases += [version]("{0}.{1}.{2}.{3}" -f $tm.Groups['maj'].Value, $tm.Groups['min'].Value, $tm.Groups['bld'].Value, $r)
+            }
+        }
+        if ($tagBases.Count -gt 0) {
+            $maxTagBase = ($tagBases | Sort-Object -Descending | Select-Object -First 1)
+            if ($curBase -gt $maxTagBase) { $baseRaised = $true }
+        }
+    }
+    catch {
+        Write-Host "Base-raise detection skipped: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
+if ($hasChannel -and $Channel -eq 'beta' -and $templateMode) {
+    $n = 1
+    $tm2 = [regex]::Match($pre, '^beta\.(?<n>\d+)$')
+    if ($pre -and $tm2.Success) { $n = [int]$tm2.Groups['n'].Value + 1 }
+    $pre = "beta.$n"
+    if ($format -eq '4') {
+        $newVersion = "{0}.{1}.{2}.{3}-{4}" -f $maj, $min, $bld, $rev, $pre
+    }
+    else {
+        $newVersion = "{0}.{1}.{2}-{3}" -f $maj, $min, $bld, $pre
+    }
+}
+elseif ($hasChannel -and $Channel -eq 'beta' -and $baseRaised) {
+    Write-Host "Base $maj.$min.$bld is higher than the latest tag -- manual version increase detected; restarting at beta.1" -ForegroundColor Yellow
+    $pre = 'beta.1'
+    if ($format -eq '4') {
+        $newVersion = "{0}.{1}.{2}.{3}-{4}" -f $maj, $min, $bld, $rev, $pre
+    }
+    else {
+        $newVersion = "{0}.{1}.{2}-{3}" -f $maj, $min, $bld, $pre
+    }
+}
+elseif ($hasChannel -and $Channel -eq 'beta') {
     # Beta channel: bump -BumpComponent if no prerelease, otherwise increment beta.N
     if (-not $pre) {
         # First beta after stable release: bump the configured component and add -beta.1
@@ -231,7 +322,7 @@ elseif ($hasChannel -and $Channel -eq 'release') {
     # prerelease suffix at all, this is a release-only flow with no preceding beta stage
     # (e.g. IIIF), so bump the configured component directly instead of re-tagging the
     # same version.
-    if (-not $pre) {
+    if (-not $pre -and -not $templateMode) {
         switch ($BumpComponent) {
             'major' { $maj += 1; $min = 0; $bld = 0 }
             'minor' { $min += 1; $bld = 0 }
@@ -253,7 +344,7 @@ Write-Host ('New:     ' + $newVersion)
 
 # Update version in files
 if ($usePropsFile) {
-    $pkgNode.InnerText = $newVersion
+    $pkgNode.InnerText = (Format-Written $newVersion)
     $xml.Save($PropsPath)
     $updatedFiles = @($PropsPath)
 }
