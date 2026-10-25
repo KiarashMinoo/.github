@@ -172,6 +172,11 @@ jobs:
           done
           sln=$(find . \( -name "*.sln" -o -name "*.slnx" \) \
                     -not -path "*/obj/*" -not -path "*/bin/*" | head -1)
+          # Bootstrap restore (failure ignored): on a cold checkout the shared props (which define
+          # ThunderPropagatorBaseVersion) aren't downloaded until restore's own target runs, so the
+          # first restore fails; it still downloads them, and the real restore below then succeeds.
+          dotnet restore ${sln:-.} -p:ThunderPropagatorBaseVersion=0.0.0 || true
+          dotnet build-server shutdown || true
           dotnet restore ${sln:-.}
           dotnet build ${sln:-.} \
             --configuration Release \

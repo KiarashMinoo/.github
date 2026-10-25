@@ -266,6 +266,17 @@ if (-not $SkipRestore) {
   # on missing package/property state that never actually gets (re)downloaded. Shutting the server
   # down immediately before Restore forces a cold, disk-accurate evaluation.
   dotnet build-server shutdown
+  # Bootstrap restore (result deliberately ignored): on a cold checkout / right after Clean the
+  # shared props (.shared-props/) are absent when MSBuild first evaluates the projects, so values
+  # they define -- e.g. ThunderPropagatorBaseVersion, used in <Version> and in floating package
+  # pins -- are empty, and this very first Restore fails ("RestoreTask returned false but did not
+  # log an error"). Its BeforeTargets="Restore" download target still runs though, so after this
+  # call the shared props are on disk. The base is overridden with a throwaway value only so this
+  # pass evaluates cleanly; nothing from it is kept -- the real Restore below re-evaluates with the
+  # real base from the downloaded Shared.Build.props.
+  dotnet restore $SolutionPath --nologo --disable-parallel -p:Platform="$platformSol" -p:ThunderPropagatorBaseVersion=0.0.0 | Out-Null
+  $global:LASTEXITCODE = 0
+  dotnet build-server shutdown
   dotnet restore $SolutionPath --nologo --disable-parallel -p:Platform="$platformSol"
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE

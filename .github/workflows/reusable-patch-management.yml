@@ -92,12 +92,21 @@ jobs:
         run: |
           $slnFiles = Get-ChildItem -Recurse -Include "*.sln","*.slnx" |
             Where-Object { $_.FullName -notmatch 'node_modules|\.git|\.ci-scripts' }
+          # Bootstrap restore (failure ignored): on a cold checkout the shared props (which define
+          # ThunderPropagatorBaseVersion) aren't downloaded until restore's own target runs, so the
+          # first restore fails; it still downloads them, and the real restore below then succeeds.
           if ($slnFiles.Count -gt 0) {
             foreach ($sln in $slnFiles) {
               Write-Host "Restoring: $($sln.FullName)"
+              dotnet restore $sln.FullName -p:ThunderPropagatorBaseVersion=0.0.0 | Out-Null
+              $global:LASTEXITCODE = 0
+              dotnet build-server shutdown
               dotnet restore $sln.FullName
             }
           } else {
+            dotnet restore -p:ThunderPropagatorBaseVersion=0.0.0 | Out-Null
+            $global:LASTEXITCODE = 0
+            dotnet build-server shutdown
             dotnet restore
           }
 
