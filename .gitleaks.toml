@@ -1,0 +1,18 @@
+title = "ThunderPropagator gitleaks configuration"
+
+# Start from gitleaks' built-in rule set and only add allowlists on top of it.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Build output and tool caches are never source of truth for secrets"
+paths = [
+  '''(^|/)(bin|obj|node_modules|TestResults|artifacts)/''',
+  '''(^|/)\.shared-props/''',
+  '''(^|/)\.jscpd-report/''',
+]
+
+# To accept a finding that is a verified false positive, prefer (in this order):
+#   1. an inline `gitleaks:allow` comment on that exact line, or
+#   2. its Fingerprint in a .gitleaksignore file,
+# rather than widening the allowlists above. A secret that was REAL must be rotated, not allowlisted.

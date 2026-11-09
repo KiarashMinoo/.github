@@ -1,0 +1,24 @@
+# Git hooks via Lefthook (https://lefthook.dev). One-time setup per clone:
+#   1. install lefthook (https://lefthook.dev/installation/), then run:  lefthook install
+#   2. install gitleaks (https://github.com/gitleaks/gitleaks#installing)
+# A missing tool is skipped with a notice so a fresh clone is never blocked; the CI workflow
+# (.github/workflows/security-scan.yml) runs the same checks and is the enforcing gate.
+
+pre-commit:
+  commands:
+    gitleaks:
+      run: |
+        if ! command -v gitleaks >/dev/null 2>&1; then
+          echo "lefthook: gitleaks not installed - skipping the staged secret scan"; exit 0
+        fi
+        gitleaks git --pre-commit --staged --redact --no-banner --verbose --config .gitleaks.toml
+
+pre-push:
+  parallel: true
+  commands:
+    osv-scanner:
+      run: |
+        if ! command -v osv-scanner >/dev/null 2>&1; then
+          echo "lefthook: osv-scanner not installed - skipping the dependency scan (https://google.github.io/osv-scanner/installation/)"; exit 0
+        fi
+        osv-scanner scan source --recursive .

@@ -1,0 +1,32 @@
+name: Security & Quality Scan
+
+# Secret scanning (gitleaks), dependency vulnerabilities (OSV-Scanner). The logic lives in KiarashMinoo/.github
+# (reusable-*.yml); this file only decides when it runs. Local equivalents: lefthook.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1'   # Monday 06:00 UTC: full-history secret scan + fresh OSV data
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  secret-scan:
+    uses: KiarashMinoo/.github/.github/workflows/reusable-secret-scan.yml@main
+    secrets:
+      gh-token: ${{ secrets.GITHUB_TOKEN }}
+
+  osv-scan:
+    uses: KiarashMinoo/.github/.github/workflows/reusable-osv-scan.yml@main
+    secrets:
+      gh-token: ${{ secrets.GITHUB_TOKEN }}

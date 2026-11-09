@@ -1,0 +1,148 @@
+name: Reusable — Code Quality (jscpd + knip)
+
+# jscpd (https://github.com/kucherenko/jscpd): copy/paste detection for any language. The repository's
+#   .jscpd.json holds the formats, ignore globs and the duplication THRESHOLD; the run fails when the
+#   duplicated-lines percentage is over it. Thresholds were calibrated from each repo's real baseline, so
+#   they stop duplication from growing rather than demanding a rewrite.
+# knip (https://github.com/webpro-nl/knip): unused files, exports and dependencies in JS/TS projects. It runs
+#   only when a package.json exists (none of the .NET repositories has one today), so it costs nothing until
+#   a front-end is added.
+
+on:
+  workflow_call:
+    inputs:
+      enable-jscpd:
+        type: boolean
+        default: true
+      jscpd-version:
+        description: jscpd npm version
+        type: string
+        default: '5.4.3'
+      jscpd-config:
+        description: jscpd config file (formats, ignore globs, threshold)
+        type: string
+        default: '.jscpd.json'
+      jscpd-report-dir:
+        description: Report directory configured in the jscpd config ("output")
+        type: string
+        default: '.jscpd-report'
+      enable-knip:
+        type: boolean
+        default: true
+      knip-version:
+        description: knip npm version
+        type: string
+        default: '6.44.2'
+      knip-working-directory:
+        description: Directory containing the package.json knip should analyze
+        type: string
+        default: '.'
+      node-version:
+        type: string
+        default: '22'
+
+permissions:
+  contents: read
+
+jobs:
+  jscpd:
+    if: ${{ inputs.enable-jscpd }}
+    name: Duplication (jscpd)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Run jscpd
+        id: jscpd
+        shell: bash
+        env:
+          VERSION: ${{ inputs.jscpd-version }}
+          CONFIG: ${{ inputs.jscpd-config }}
+          REPORT_DIR: ${{ inputs.jscpd-report-dir }}
+        run: |
+          set +e
+          npx --yes "jscpd@${VERSION}" --config "$CONFIG" --no-colors .
+          code=$?
+          set -e
+
+          report="$REPORT_DIR/jscpd-report.json"
+          if [ -f "$report" ]; then
+            jq -r '.statistics.total | "### jscpd\n\n- Sources: \(.sources)\n- Clones: \(.clones)\n- Duplicated lines: \(.duplicatedLines) of \(.lines) (**\(.percentage * 100 | round / 100)%**)"' \
+              "$report" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Upload jscpd report
+        if: always() && hashFiles(format('{0}/**', inputs.jscpd-report-dir)) != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: jscpd-report
+          path: ${{ inputs.jscpd-report-dir }}
+          retention-days: 5
+
+      - name: Fail when over the duplication threshold
+        if: steps.jscpd.outputs.code != '0'
+        shell: bash
+        env:
+          CODE: ${{ steps.jscpd.outputs.code }}
+        run: |
+          echo "::error::jscpd failed (exit $CODE): duplication is over the threshold in the jscpd config, or the tool errored. See the job summary and the jscpd-report artifact."
+          exit "$CODE"
+
+  knip:
+    if: ${{ inputs.enable-knip }}
+    name: Unused code (knip)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Look for a JS/TS project
+        id: detect
+        shell: bash
+        env:
+          WD: ${{ inputs.knip-working-directory }}
+        run: |
+          if [ -f "$WD/package.json" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No package.json in '$WD' — knip only analyzes JS/TS projects, skipping."
+          fi
+
+      - name: Setup Node.js
+        if: steps.detect.outputs.found == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install dependencies (no lifecycle scripts)
+        if: steps.detect.outputs.found == 'true'
+        shell: bash
+        working-directory: ${{ inputs.knip-working-directory }}
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --ignore-scripts --no-audit --no-fund
+          else
+            npm install --ignore-scripts --no-audit --no-fund
+          fi
+
+      - name: Run knip
+        if: steps.detect.outputs.found == 'true'
+        shell: bash
+        working-directory: ${{ inputs.knip-working-directory }}
+        env:
+          VERSION: ${{ inputs.knip-version }}
+        run: npx --yes "knip@${VERSION}"
