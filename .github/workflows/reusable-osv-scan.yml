@@ -1,0 +1,127 @@
+name: Reusable — Dependency Vulnerability Scan (OSV-Scanner)
+
+# Recursively scans the repository for dependency manifests and checks them against the OSV database
+# (https://google.github.io/osv-scanner/). For these .NET repositories OSV-Scanner reads NuGet Central
+# Package Management (Directory.Packages.props), MSBuild project files, packages.lock.json / deps.json,
+# package-lock.json and similar, plus the GitHub Actions used by the workflows themselves.
+#
+# Files ignored by .gitignore (bin/, obj/, node_modules/ ...) are skipped by OSV-Scanner itself.
+# To accept a known finding, add an [[IgnoredVulns]] entry (with a reason and an expiry date) to an
+# osv-scanner.toml next to the manifest — see https://google.github.io/osv-scanner/configuration/.
+#
+# Exit codes of osv-scanner: 0 clean, 1 vulnerabilities found, 128 no supported manifests found
+# (treated as clean here), anything else is a tool error and always fails the job.
+
+on:
+  workflow_call:
+    inputs:
+      osv-scanner-version:
+        description: ghcr.io/google/osv-scanner image tag
+        type: string
+        default: 'v2.7.0'
+      scan-paths:
+        description: Space-separated paths to scan, relative to the repository root
+        type: string
+        default: '.'
+      fail-on-vulnerabilities:
+        description: Fail the job when vulnerable dependencies are found
+        type: boolean
+        default: true
+      upload-sarif:
+        description: Upload the SARIF report to GitHub code scanning when it is available
+        type: boolean
+        default: true
+    secrets:
+      gh-token:
+        description: GitHub token with security-events:write for the SARIF upload
+        required: true
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  osv-scan:
+    name: OSV-Scanner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Run OSV-Scanner ${{ inputs.osv-scanner-version }}
+        id: scan
+        shell: bash
+        env:
+          VERSION: ${{ inputs.osv-scanner-version }}
+          SCAN_PATHS: ${{ inputs.scan-paths }}
+        run: |
+          set +e
+          # shellcheck disable=SC2086  # SCAN_PATHS is deliberately word-split into several paths
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src \
+            "ghcr.io/google/osv-scanner:${VERSION}" \
+            scan source --recursive --format sarif --output-file osv-results.sarif $SCAN_PATHS
+          code=$?
+          set -e
+
+          vulns=0
+          if [ -f osv-results.sarif ]; then
+            vulns=$(jq '[.runs[].results | length] | add // 0' osv-results.sarif)
+          fi
+
+          case $code in
+            0)   result=clean ;;
+            1)   result=vulnerable ;;
+            128) result=clean; echo "::notice::OSV-Scanner found no supported dependency manifests in: $SCAN_PATHS" ;;
+            *)   echo "result=error" >> "$GITHUB_OUTPUT"; echo "::error::osv-scanner failed (exit $code)"; exit "$code" ;;
+          esac
+
+          {
+            echo "### OSV-Scanner"
+            echo ""
+            echo "- Result: **$result**"
+            echo "- Vulnerability results: **$vulns**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+          echo "vulns=$vulns" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SARIF artifact
+        if: always() && hashFiles('osv-results.sarif') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: osv-scanner-sarif
+          path: osv-results.sarif
+          retention-days: 5
+
+      - name: Check Code Scanning availability
+        id: ghas
+        if: always() && inputs.upload-sarif && hashFiles('osv-results.sarif') != '' && github.event.pull_request.head.repo.fork != true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.gh-token }}
+        run: |
+          http=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts?per_page=1")
+          [[ "$http" == "200" ]] && echo "enabled=true" >> "$GITHUB_OUTPUT" || echo "enabled=false" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SARIF to Code Scanning
+        if: always() && steps.ghas.outputs.enabled == 'true'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: osv-results.sarif
+          category: osv-scanner
+
+      - name: Fail on vulnerable dependencies
+        if: steps.scan.outputs.result == 'vulnerable' && inputs.fail-on-vulnerabilities
+        shell: bash
+        env:
+          VULNS: ${{ steps.scan.outputs.vulns }}
+        run: |
+          echo "::error::OSV-Scanner reported $VULNS vulnerability result(s). See the osv-scanner-sarif artifact for details."
+          exit 1
