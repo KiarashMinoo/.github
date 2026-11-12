@@ -42,7 +42,7 @@ This repository centralizes reusable GitHub Actions workflows to avoid duplicati
 
 **Inputs**:
 - `solution-path` (string, default: `**/*.sln*`) — Path to `.sln`/`.slnx` or project glob
-- `dotnet-versions` (string, default: `8.0.x`, `9.0.x`, `10.0.x`) — .NET SDK versions
+- `dotnet-versions` (string, default: `8.0.x`, `9.0.x`, `10.0.x`, `11.0.x`) — .NET SDK versions
 
 **Secrets**:
 - `gh-token` (required) — GitHub token for commits and tagging
@@ -64,7 +64,7 @@ This repository centralizes reusable GitHub Actions workflows to avoid duplicati
 
 **Inputs**:
 - `solution-path` (string, default: `**/*.sln*`) — Path to `.sln`/`.slnx` or project glob
-- `dotnet-versions` (string, default: `8.0.x`, `9.0.x`, `10.0.x`) — .NET SDK versions
+- `dotnet-versions` (string, default: `8.0.x`, `9.0.x`, `10.0.x`, `11.0.x`) — .NET SDK versions
 
 **Secrets**:
 - `gh-token` (required) — GitHub token for releases and tagging

@@ -54,7 +54,7 @@ Example: `src/Application/Foo/Bar.cs` → `Application/Foo/BarTests.cs`; `src/fo
 - If missing, **create** them under `Tests/UnitTests` and `Tests/ArchTests`.
 - Both projects must be inside the `.sln` under a solution folder named **`Tests`**.
 - If no `.sln` exists, create one named after the repo root folder.
-- **Target framework**: `net10.0`.
+- **Target frameworks**: `net8.0`, `net9.0`, `net10.0` and `net11.0` (`<TargetFrameworks>net8.0;net9.0;net10.0;net11.0</TargetFrameworks>`).
 - **Enable preview features** (`<EnablePreviewFeatures>true</EnablePreviewFeatures>`).
 
 ### csproj baselines (create only if missing)
@@ -65,7 +65,7 @@ Auto-discover `ProjectReference` entries by scanning all non-test `*.csproj` fil
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
     <IsPackable>false</IsPackable>
     <EnablePreviewFeatures>true</EnablePreviewFeatures>
     <Nullable>enable</Nullable>
@@ -95,7 +95,7 @@ Auto-discover `ProjectReference` entries by scanning all non-test `*.csproj` fil
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
     <IsPackable>false</IsPackable>
     <EnablePreviewFeatures>true</EnablePreviewFeatures>
     <Nullable>enable</Nullable>
