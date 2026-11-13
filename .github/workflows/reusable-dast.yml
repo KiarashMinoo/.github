@@ -6,6 +6,10 @@ name: Reusable — DAST (Dynamic Analysis Security Testing)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: Runner label for the jobs (e.g. self-hosted)
+        type: string
+        default: ubuntu-latest
       target-url:
         description: Full URL of the running application to scan (must be reachable from runners)
         type: string
@@ -54,7 +58,7 @@ jobs:
   # ------------------------------------------------------------------
   zap-scan:
     name: OWASP ZAP — ${{ inputs.scan-type }} scan
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 120
 
     steps:

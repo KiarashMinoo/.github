@@ -3,6 +3,10 @@ name: Reusable — SAST (Static Analysis Security Testing)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: Runner label for the jobs (e.g. self-hosted)
+        type: string
+        default: ubuntu-latest
       languages:
         description: JSON array of CodeQL languages (e.g. '["csharp","javascript"]')
         type: string
@@ -74,7 +78,7 @@ jobs:
   secret-scan:
     if: ${{ inputs.enable-secret-scan }}
     name: Secret Scanning (TruffleHog)
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -97,7 +101,7 @@ jobs:
   codeql:
     if: ${{ inputs.enable-codeql }}
     name: CodeQL (${{ matrix.language }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -213,7 +217,7 @@ jobs:
   devskim:
     if: ${{ inputs.enable-devskim }}
     name: DevSkim SAST
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
 
     steps:
@@ -270,7 +274,7 @@ jobs:
     name: PR Security Gate (High/Critical)
     if: ${{ inputs.enable-pr-gate && github.event_name == 'pull_request' }}
     needs: codeql
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     permissions:
       security-events: read

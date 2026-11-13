@@ -3,6 +3,10 @@ name: Reusable — Patch Management (Dependency Vulnerability & Update Audit)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: Runner label for the jobs (e.g. self-hosted)
+        type: string
+        default: ubuntu-latest
       dotnet-versions:
         description: .NET SDK versions to install
         type: string
@@ -62,7 +66,7 @@ jobs:
   # ------------------------------------------------------------------
   dotnet-audit:
     name: .NET Package Vulnerability Audit
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 20
     outputs:
       vulnerable-found: ${{ steps.audit.outputs.vulnerable_found }}
@@ -170,7 +174,7 @@ jobs:
   # ------------------------------------------------------------------
   owasp-dependency-check:
     name: OWASP Dependency-Check
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     outputs:
       cves-found: ${{ steps.owasp-findings.outputs.cves_found }}
@@ -247,7 +251,7 @@ jobs:
       inputs.create-issue &&
       (needs.dotnet-audit.outputs.vulnerable-found == 'true' ||
        needs.owasp-dependency-check.outputs.cves-found == 'true')
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
 
     steps:

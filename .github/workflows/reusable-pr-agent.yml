@@ -9,6 +9,11 @@ on:
       - ready_for_review
 
   workflow_call:
+    inputs:
+      runner:
+        description: Runner label for the jobs (e.g. self-hosted)
+        type: string
+        default: ubuntu-latest
     secrets:
       OPENAI_KEY:
         required: true
@@ -28,7 +33,7 @@ concurrency:
 
 jobs:
   pr-agent:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 8
 
     steps:

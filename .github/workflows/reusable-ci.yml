@@ -20,6 +20,10 @@ name: Reusable — CI (beta + release, unified)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: Runner label for the jobs (e.g. self-hosted)
+        type: string
+        default: ubuntu-latest
       channel:
         description: Which SemVer channel this run bumps -- 'beta' or 'release'
         type: string
@@ -194,7 +198,7 @@ jobs:
   # --- 1) bump version -> generate changelog -> commit both -> tag -> push -> GitHub Release ---
   version:
     if: ${{ github.actor != 'github-actions[bot]' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     permissions:
       contents: write # required to push the commit, push the tag, and create the Release
@@ -536,7 +540,7 @@ jobs:
     name: Publish packages (${{ inputs.channel }})
     needs: [version, pack]
     if: inputs.publish-to-nuget
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -728,7 +732,7 @@ jobs:
     # (see retention-days: 1 on the upload steps above for the fallback expiry) so a
     # "re-run failed jobs" retry can still find and push everything together.
     if: inputs.publish-to-nuget && inputs.cleanup-artifacts && needs.publish-nuget.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     permissions:
       contents: read
