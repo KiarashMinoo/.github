@@ -98,6 +98,11 @@ jobs:
   # ------------------------------------------------------------------
   # 2) CodeQL — multi-language semantic SAST via GitHub Security
   # ------------------------------------------------------------------
+
+      # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
+      - name: Clean the runner
+        if: ${{ always() && inputs.runner == 'self-hosted' }}
+        uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43
   codeql:
     if: ${{ inputs.enable-codeql }}
     name: CodeQL (${{ matrix.language }})
@@ -214,6 +219,11 @@ jobs:
   # ------------------------------------------------------------------
   # 3) DevSkim — pattern-based SAST with OWASP and security rule packs
   # ------------------------------------------------------------------
+
+      # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
+      - name: Clean the runner
+        if: ${{ always() && inputs.runner == 'self-hosted' }}
+        uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43
   devskim:
     if: ${{ inputs.enable-devskim }}
     name: DevSkim SAST
@@ -270,6 +280,11 @@ jobs:
   # ------------------------------------------------------------------
   # 4) PR Security Gate — block PRs with open high/critical CodeQL alerts
   # ------------------------------------------------------------------
+
+      # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
+      - name: Clean the runner
+        if: ${{ always() && inputs.runner == 'self-hosted' }}
+        uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43
   pr-security-gate:
     name: PR Security Gate (High/Critical)
     if: ${{ inputs.enable-pr-gate && github.event_name == 'pull_request' }}
@@ -335,4 +350,9 @@ jobs:
             } else {
               core.info('No open high/critical code-scanning alerts for this PR.');
             }
+
+      # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
+      - name: Clean the runner
+        if: ${{ always() && inputs.runner == 'self-hosted' }}
+        uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43
 

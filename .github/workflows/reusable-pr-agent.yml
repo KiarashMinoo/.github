@@ -208,3 +208,8 @@ jobs:
             - technical
             - actionable
             - fix-oriented
+
+      # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
+      - name: Clean the runner
+        if: ${{ always() && inputs.runner == 'self-hosted' }}
+        uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43

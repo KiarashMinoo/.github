@@ -326,6 +326,11 @@ jobs:
           fi
 
   # --- 2) build -> optional test -> pack matrix & upload artifacts ---
+
+      # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
+      - name: Clean the runner
+        if: ${{ always() && inputs.runner == 'self-hosted' }}
+        uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43
   pack:
     needs: version
     runs-on: ${{ matrix.os }}
@@ -536,6 +541,11 @@ jobs:
   # (this file's own repo), never the calling repo -- confirmed via github.com/NuGet/login
   # issues #6 and #24 (both open as of 2026-07). Kept available only for callers that
   # want to experiment with it anyway.
+
+      # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
+      - name: Clean the runner
+        if: ${{ always() && matrix.os == 'self-hosted' }}
+        uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43
   publish-nuget:
     name: Publish packages (${{ inputs.channel }})
     needs: [version, pack]
@@ -719,6 +729,11 @@ jobs:
             push_with_retry "$symbols" github-packages "$GH_TOKEN" || exit 1
           done
 
+      # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
+      - name: Clean the runner
+        if: ${{ always() && inputs.runner == 'self-hosted' }}
+        uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43
+
   cleanup-nuget-artifacts:
     name: Delete run artifacts
     needs: publish-nuget
@@ -746,3 +761,8 @@ jobs:
             --paginate --jq '.artifacts[].id' | while read -r id; do
               gh api repos/${{ github.repository }}/actions/artifacts/$id -X DELETE
             done
+
+      # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
+      - name: Clean the runner
+        if: ${{ always() && inputs.runner == 'self-hosted' }}
+        uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43

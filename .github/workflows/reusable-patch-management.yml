@@ -172,6 +172,11 @@ jobs:
   # ------------------------------------------------------------------
   # 2) OWASP Dependency-Check — deep CVE scan with NVD database
   # ------------------------------------------------------------------
+
+      # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
+      - name: Clean the runner
+        if: ${{ always() && inputs.runner == 'self-hosted' }}
+        uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43
   owasp-dependency-check:
     name: OWASP Dependency-Check
     runs-on: ${{ inputs.runner }}
@@ -243,6 +248,11 @@ jobs:
   # ------------------------------------------------------------------
   # 3) Open or update a GitHub issue when vulnerabilities are detected
   # ------------------------------------------------------------------
+
+      # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
+      - name: Clean the runner
+        if: ${{ always() && inputs.runner == 'self-hosted' }}
+        uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43
   notify-owner:
     name: Notify Repository Owner
     needs: [dotnet-audit, owasp-dependency-check]
@@ -298,3 +308,8 @@ jobs:
               const { data: created } = await github.rest.issues.create({ owner, repo, title, body, labels: ['security', 'patch-management'] });
               core.info(`Created issue #${created.number}`);
             }
+
+      # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
+      - name: Clean the runner
+        if: ${{ always() && inputs.runner == 'self-hosted' }}
+        uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43
