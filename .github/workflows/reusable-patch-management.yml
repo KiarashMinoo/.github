@@ -245,14 +245,20 @@ jobs:
           " 2>/dev/null || echo "0")
           echo "cves_found=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
-  # ------------------------------------------------------------------
-  # 3) Open or update a GitHub issue when vulnerabilities are detected
-  # ------------------------------------------------------------------
+      # The Dependency-Check action runs in a container as root, so its report files are root-owned and the runner user can neither
+      # clean them nor check out over them next time ("EACCES ... unlink"). Hand the workspace back to the runner user first.
+      - name: Take back ownership of the workspace
+        if: ${{ always() && inputs.runner == 'self-hosted' }}
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
 
       # Self-hosted runners keep their workspace between jobs: empty it when the job ends, whatever its result.
       - name: Clean the runner
         if: ${{ always() && inputs.runner == 'self-hosted' }}
         uses: atos-actions/clean-self-hosted-runner@4e721c03ebc4eef7beeed088ad4062e3790ef2ae # v1.4.43
+
+  # ------------------------------------------------------------------
+  # 3) Open or update a GitHub issue when vulnerabilities are detected
+  # ------------------------------------------------------------------
   notify-owner:
     name: Notify Repository Owner
     needs: [dotnet-audit, owasp-dependency-check]
