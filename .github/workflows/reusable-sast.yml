@@ -81,6 +81,11 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     steps:
+      # A container action can leave root-owned files in a self-hosted runner workspace; checkout then fails with EACCES.
+      - name: Reclaim the workspace
+        if: ${{ inputs.runner == 'self-hosted' }}
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -114,6 +119,11 @@ jobs:
         language: ${{ fromJson(inputs.languages) }}
 
     steps:
+      # A container action can leave root-owned files in a self-hosted runner workspace; checkout then fails with EACCES.
+      - name: Reclaim the workspace
+        if: ${{ inputs.runner == 'self-hosted' }}
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
+
       - name: Checkout
         uses: actions/checkout@v7
 
@@ -231,6 +241,11 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      # A container action can leave root-owned files in a self-hosted runner workspace; checkout then fails with EACCES.
+      - name: Reclaim the workspace
+        if: ${{ inputs.runner == 'self-hosted' }}
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
+
       - name: Checkout
         uses: actions/checkout@v7
 

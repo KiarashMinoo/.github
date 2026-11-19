@@ -215,6 +215,11 @@ jobs:
             *) echo "::error::channel input must be 'beta' or 'release', got '${{ inputs.channel }}'"; exit 1 ;;
           esac
 
+      # A container action can leave root-owned files in a self-hosted runner workspace; checkout then fails with EACCES.
+      - name: Reclaim the workspace
+        if: ${{ inputs.runner == 'self-hosted' }}
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -224,6 +229,11 @@ jobs:
           # commit-tag-push.ps1 actually reuses, so this is the one checkout that needs
           # to authenticate as an account that can satisfy a branch-protection bypass.
           token: ${{ secrets.push-token != '' && secrets.push-token || secrets.gh-token }}
+
+      # A container action can leave root-owned files in a self-hosted runner workspace; checkout then fails with EACCES.
+      - name: Reclaim the workspace
+        if: ${{ inputs.runner == 'self-hosted' }}
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
 
       - name: Checkout workflow scripts
         uses: actions/checkout@v7
@@ -342,11 +352,21 @@ jobs:
         platform_in: ${{ fromJson(inputs.platforms) }}
         configuration: ${{ fromJson(inputs.configurations) }}
     steps:
+      # A container action can leave root-owned files in a self-hosted runner workspace; checkout then fails with EACCES.
+      - name: Reclaim the workspace
+        if: ${{ inputs.runner == 'self-hosted' }}
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
+
       - name: Checkout version-bump commit
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ needs.version.outputs.sha }}
+
+      # A container action can leave root-owned files in a self-hosted runner workspace; checkout then fails with EACCES.
+      - name: Reclaim the workspace
+        if: ${{ inputs.runner == 'self-hosted' }}
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
 
       - name: Checkout workflow scripts
         uses: actions/checkout@v7
@@ -557,6 +577,11 @@ jobs:
       id-token: write # required for Trusted Publishing OIDC (nuget-target: nuget.org, nuget-auth-mode: oidc)
       packages: write # required for GitHub Packages (nuget-target: github-packages)
     steps:
+      # A container action can leave root-owned files in a self-hosted runner workspace; checkout then fails with EACCES.
+      - name: Reclaim the workspace
+        if: ${{ inputs.runner == 'self-hosted' }}
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
+
       - name: Checkout version-bump commit
         uses: actions/checkout@v7
         with:
