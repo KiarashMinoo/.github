@@ -329,6 +329,10 @@ To update workflows, scripts, or prompts:
 
 ---
 
+## Author
+
+Built by [Ahmad Kiarash Minoo](https://kiarashminoo.com/).
+
 ## License
 
 MIT — See LICENSE file
